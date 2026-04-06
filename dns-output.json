@@ -1,0 +1,30 @@
+{
+  "srv": [
+    {
+      "name": "ac-cs3fwxc-shard-00-01.racbswp.mongodb.net",
+      "port": 27017,
+      "priority": 0,
+      "weight": 0,
+      "type": "SRV"
+    },
+    {
+      "name": "ac-cs3fwxc-shard-00-02.racbswp.mongodb.net",
+      "port": 27017,
+      "priority": 0,
+      "weight": 0,
+      "type": "SRV"
+    },
+    {
+      "name": "ac-cs3fwxc-shard-00-00.racbswp.mongodb.net",
+      "port": 27017,
+      "priority": 0,
+      "weight": 0,
+      "type": "SRV"
+    }
+  ],
+  "txt": [
+    [
+      "authSource=admin&replicaSet=atlas-t9jfrr-shard-0"
+    ]
+  ]
+}

@@ -62,7 +62,7 @@ const userSchema = new mongoose.Schema({
 
 // Add indexes for frequent queries
 userSchema.index({ role: 1, active: 1 });
-userSchema.index({ email: 1 });
+// userSchema.index({ email: 1 }); // Removed: duplicate of unique: true
 
 // Hash password before saving
 userSchema.pre('save', async function (next) {
