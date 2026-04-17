@@ -17,7 +17,7 @@ const transactionSchema = new mongoose.Schema({
     },
     category: {
         type: String,
-        enum: ['capital', 'expense', 'income', 'other', 'wallet_allocation'],
+        enum: ['expense', 'capital', 'other', 'wallet_allocation', 'third_party_funds', 'salary_payment'],
         default: 'other'
     },
     paymentMode: {

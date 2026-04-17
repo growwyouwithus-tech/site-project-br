@@ -50,6 +50,7 @@ const {
   getSiteMachines,
   toggleMachineRentPause,
   getWalletTransactions,
+  addThirdPartyFunds,
   getContractors,
   payContractor,
   payVendor,
@@ -63,6 +64,11 @@ const {
   getContractorPayments,
   getVendorPayments
 } = require('../controllers/siteController');
+
+const {
+  getProjectTodos,
+  updateTodoStatus
+} = require('../controllers/todoController');
 
 // Apply authentication and site manager middleware to all routes
 router.use(isAuthenticated);
@@ -86,7 +92,7 @@ router.get('/labour-attendance', getLabourAttendance);
 router.put('/labour-attendance/:id', updateLabourAttendance);
 
 // Stock In
-router.post('/stock-in', uploadSingle, addStockIn);
+router.post('/stock-in', uploadPhotos, addStockIn);
 router.get('/stocks', getStocks);
 
 // Stock Out
@@ -126,6 +132,8 @@ router.get('/vendors', getVendors);
 // Projects (assigned)
 router.get('/projects', getProjects);
 router.get('/projects/:id', getProjectDetails);
+router.get('/projects/:projectId/todos', getProjectTodos);
+router.patch('/todos/:id/status', updateTodoStatus);
 
 // Machines (assigned)
 router.get('/machines', getMachines);
@@ -148,6 +156,7 @@ router.get('/equipments', getEquipments);
 
 // Wallet & Transactions
 router.get('/wallet-transactions', getWalletTransactions);
+router.post('/add-funds', addThirdPartyFunds);
 
 // Contractors
 router.get('/contractors', getContractors);

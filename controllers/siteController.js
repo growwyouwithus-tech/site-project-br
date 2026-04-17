@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Site Manager Controller - MongoDB Version
  * Handles all site manager-specific operations with MongoDB
  */
@@ -365,11 +365,20 @@ const addStockIn = async (req, res, next) => {
             console.log(`Wallet deducted. New Balance: ${user.walletBalance}`);
         }
 
-        // Upload photo to Cloudinary if file exists
+        // Upload photos to Cloudinary if files exist
+        let photoUrls = [];
         let photoUrl = null;
-        if (req.file) {
+        
+        if (req.files && req.files.length > 0) {
+            const { uploadToCloudinary } = require('../config/cloudinary');
+            const uploadPromises = req.files.map(file => uploadToCloudinary(file.buffer, 'stock'));
+            photoUrls = await Promise.all(uploadPromises);
+            photoUrl = photoUrls[0]; // Set first photo as primary
+        } else if (req.file) {
+            // Fallback for single file upload
             const { uploadToCloudinary } = require('../config/cloudinary');
             photoUrl = await uploadToCloudinary(req.file.buffer, 'stock');
+            photoUrls = [photoUrl];
         }
 
         const newStock = new Stock({
@@ -381,6 +390,7 @@ const addStockIn = async (req, res, next) => {
             unitPrice: parseFloat(unitPrice),
             totalPrice,
             photo: photoUrl,
+            photos: photoUrls,
             remarks,
             addedBy: userId,
             paymentStatus: status // Use the cleaned status
@@ -1740,7 +1750,25 @@ const getWalletTransactions = async (req, res, next) => {
             });
         });
 
-        // 4. Outflows: Contractor Payments
+        // 4. Inflows: Third Party Funds
+        const thirdPartyFunds = await Transaction.find({
+            category: 'third_party_funds',
+            addedBy: userId
+        }).sort('-date').lean();
+
+        thirdPartyFunds.forEach(t => {
+            transactions.push({
+                _id: t._id,
+                date: t.date,
+                type: 'credit',
+                category: 'Third Party Funds',
+                description: t.description || 'Received from Third Party',
+                amount: t.amount,
+                refModel: 'Transaction'
+            });
+        });
+
+        // 5. Outflows: Contractor Payments
         const contractorPayments = await ContractorPayment.find({ paidBy: userId }).populate('contractorId', 'name').lean();
         contractorPayments.forEach(p => {
             transactions.push({
@@ -1772,6 +1800,55 @@ const getWalletTransactions = async (req, res, next) => {
 
         res.json({ success: true, data: transactions });
     } catch (error) {
+        next(error);
+    }
+};
+
+// Add funds from third party to wallet
+const addThirdPartyFunds = async (req, res, next) => {
+    try {
+        const { amount, source, remarks, paymentMode, date } = req.body;
+        const userId = req.user.userId;
+
+        const fundAmount = parseFloat(amount);
+        if (isNaN(fundAmount) || fundAmount <= 0) {
+            return res.status(400).json({ success: false, error: 'Invalid amount' });
+        }
+
+        const user = await User.findById(userId);
+        if (!user) {
+            return res.status(404).json({ success: false, error: 'User not found' });
+        }
+
+        // Create transaction record
+        const transaction = new Transaction({
+            amount: fundAmount,
+            type: 'credit',
+            category: 'third_party_funds',
+            paymentMode: paymentMode || 'cash',
+            description: `Received from: ${source}${remarks ? ` - ${remarks}` : ''}`,
+            date: date || new Date(),
+            addedBy: userId,
+            relatedId: userId,
+            onModel: 'User'
+        });
+
+        await transaction.save();
+
+        // Update user wallet balance
+        user.walletBalance += fundAmount;
+        await user.save();
+
+        res.status(201).json({
+            success: true,
+            message: 'Funds added to wallet successfully',
+            data: {
+                transaction,
+                newBalance: user.walletBalance
+            }
+        });
+    } catch (error) {
+        console.error('Error adding third party funds:', error);
         next(error);
     }
 };
@@ -1977,7 +2054,7 @@ const getLabourDetails = async (req, res, next) => {
 
         // 1. Fetch Payment History (Across ALL Projects)
         const payments = await LabourPayment.find({ labourId: id })
-            .populate('paidBy', 'name') // Paid by whom
+            .populate('userId', 'name') // Paid by whom (referenced as userId in schema)
             .sort('-createdAt')
             .lean();
 
@@ -2099,12 +2176,18 @@ const getContractorDetails = async (req, res, next) => {
             .sort('-date')
             .lean();
 
+        // 3. Labours
+        const labourQuery = { contractorId: id };
+        if (projectId) labourQuery.assignedSite = projectId;
+        const labours = await Labour.find(labourQuery).lean();
+
         res.json({
             success: true,
             data: {
                 contractor,
                 machines,
-                payments
+                payments,
+                labours
             }
         });
     } catch (error) {
@@ -2289,6 +2372,7 @@ module.exports = {
     getSiteMachines,
     toggleMachineRentPause,
     getWalletTransactions,
+    addThirdPartyFunds,
     getContractors,
     payContractor,
     payVendor,

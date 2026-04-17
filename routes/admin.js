@@ -80,7 +80,9 @@ const {
   deleteContractorPayment,
   createItemName,
   getItemNames,
-  deleteItemName
+  deleteItemName,
+  verifyPassword,
+  getProfile
 } = require('../controllers/adminController');
 
 const {
@@ -97,6 +99,12 @@ const {
   deleteBankDetail
 } = require('../controllers/bankController');
 
+const {
+  createTodo,
+  getProjectTodos,
+  deleteTodo
+} = require('../controllers/todoController');
+
 // Apply authentication and admin middleware to all routes
 router.use(isAuthenticated);
 router.use(isAdmin);
@@ -104,12 +112,21 @@ router.use(isAdmin);
 // Dashboard
 router.get('/dashboard', getDashboard);
 
+// Profile
+router.get('/profile', getProfile);
+
+// Password Verification
+router.post('/verify-password', verifyPassword);
+
 // Projects
 router.get('/projects', getProjects);
 router.get('/projects/:id', getProjectDetail);
 router.post('/projects', projectValidation, createProject);
 router.put('/projects/:id', updateProject);
 router.delete('/projects/:id', deleteProject);
+router.get('/projects/:projectId/todos', getProjectTodos);
+router.post('/projects/:projectId/todos', createTodo);
+router.delete('/todos/:id', deleteTodo);
 
 // Machines
 router.get('/machines', getMachines);

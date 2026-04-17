@@ -1700,7 +1700,10 @@ const getAccounts = async (req, res, next) => {
                 category: t.category,
                 paymentMode: normalizeMode(t.paymentMode),
                 source: t.addedBy ? `${t.addedBy.name} (${t.addedBy.role})` : 'System',
-                projectId: t.projectId // Pass full project object or just name if preferred? Frontend expects full object often but let's see logic.
+                receivedFrom: t.category === 'third_party_funds' ? t.description.split(' - ')[0].replace('Received from: ', '') : null,
+                projectId: t.projectId,
+                relatedId: t.relatedId,
+                addedBy: t.addedBy 
             });
             // Append Project Name to description if exists
             const lastIdx = allTransactions.length - 1;
@@ -2836,6 +2839,51 @@ const deleteItemName = async (req, res, next) => {
     }
 };
 
+// ============ PASSWORD VERIFICATION ============
+const verifyPassword = async (req, res, next) => {
+    try {
+        const { password } = req.body;
+        if (!password) {
+            return res.status(400).json({ success: false, error: 'Password is required' });
+        }
+
+        const user = await User.findById(req.user.userId);
+        if (!user) {
+            return res.status(404).json({ success: false, error: 'User not found' });
+        }
+
+        const isMatch = await user.comparePassword(password);
+        if (!isMatch) {
+            return res.status(401).json({ success: false, error: 'Invalid admin password' });
+        }
+
+        res.json({ success: true, message: 'Authentication successful' });
+    } catch (error) {
+        next(error);
+    }
+};
+// Get admin profile
+const getProfile = async (req, res, next) => {
+    try {
+        const userId = req.user.userId;
+        const user = await User.findById(userId).select('-password');
+
+        if (!user) {
+            return res.status(404).json({
+                success: false,
+                error: 'User not found'
+            });
+        }
+
+        res.json({
+            success: true,
+            data: user
+        });
+    } catch (error) {
+        next(error);
+    }
+};
+
 module.exports = {
     getDashboard,
     getProjects,
@@ -2902,13 +2950,13 @@ module.exports = {
     // Item Names (Stock Detail)
     createItemName,
     getItemNames,
-    createItemName,
-    getItemNames,
     deleteItemName,
 
     // Notifications
     createNotification,
     getNotifications,
     sendNotification,
-    markNotificationRead
+    markNotificationRead,
+    verifyPassword,
+    getProfile
 };
