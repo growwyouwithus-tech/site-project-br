@@ -1799,12 +1799,12 @@ const getAccounts = async (req, res, next) => {
             .filter(t => t.category === 'capital' && t.type === 'credit')
             .reduce((sum, t) => sum + (t.amount || 0), 0);
 
-        // Total Debits (all money spent - expenses, payments, etc.)
+        // Total Debits (operational spending only — exclude creditor payments which are liability management)
         const totalDebits = allTransactions
-            .filter(t => t.type === 'debit')
+            .filter(t => t.type === 'debit' && t.category !== 'creditor_payment')
             .reduce((sum, t) => sum + (t.amount || 0), 0);
 
-        // Net Capital = Capital Credits - Total Debits
+        // Net Capital = Capital Credits - Operational Debits (creditor payments don't affect capital)
         const capital = capitalCredits - totalDebits;
 
         // Total Expenses (for display purposes)
@@ -2001,46 +2001,60 @@ const generateReport = async (req, res, next) => {
     try {
         const { type, startDate, endDate } = req.query;
 
-        let data = [];
+        const filter = {};
+        if (startDate || endDate) {
+            filter.createdAt = {};
+            if (startDate) filter.createdAt.$gte = new Date(startDate);
+            if (endDate) {
+                const end = new Date(endDate);
+                end.setHours(23, 59, 59, 999);
+                filter.createdAt.$lte = end;
+            }
+        }
 
         switch (type) {
             case 'expenses':
-                data = await Expense.find();
-                if (startDate || endDate) {
-                    const filter = {};
-                    if (startDate) filter.$gte = new Date(startDate);
-                    if (endDate) filter.$lte = new Date(endDate);
-                    data = data.filter(expense => {
-                        const expenseDate = new Date(expense.createdAt);
-                        if (startDate && expenseDate < new Date(startDate)) return false;
-                        if (endDate && expenseDate > new Date(endDate)) return false;
-                        return true;
-                    });
-                }
+                data = await Expense.find(filter)
+                    .populate('projectId', 'name')
+                    .populate('addedBy', 'name')
+                    .lean();
+                // Map to flatten for table display if needed, but better to handle on frontend
                 break;
 
             case 'attendance':
-                data = await User.find({ role: 'sitemanager' });
+                // For attendance report, we want the actual logs
+                data = await Attendance.find(filter)
+                    .populate('userId', 'name')
+                    .populate('projectId', 'name')
+                    .lean();
                 break;
 
             case 'stock':
-                data = await Stock.find();
+                data = await Stock.find(filter)
+                    .populate('projectId', 'name')
+                    .populate('vendorId', 'name')
+                    .lean();
                 break;
 
             case 'machines':
-                data = await Machine.find();
+                data = await Machine.find(filter)
+                    .populate('projectId', 'name')
+                    .populate('vendorId', 'name')
+                    .populate('assignedToContractor', 'name')
+                    .lean();
                 break;
 
             case 'contractors':
-                data = await Contractor.find();
+                data = await Contractor.find(filter).lean();
                 break;
 
             case 'pl':
-                // Profit & Loss report
-                const expenses = await Expense.find();
-                const totalExpenses = expenses.reduce((sum, exp) => sum + (exp.amount || 0), 0);
-                const projects = await Project.find();
-                const totalBudget = projects.reduce((sum, proj) => sum + (proj.budget || 0), 0);
+                const [allExps, allProjs] = await Promise.all([
+                    Expense.find(filter).lean(),
+                    Project.find().lean()
+                ]);
+                const totalExpenses = allExps.reduce((sum, exp) => sum + (exp.amount || 0), 0);
+                const totalBudget = allProjs.reduce((sum, proj) => sum + (proj.budget || 0), 0);
                 const profit = totalBudget - totalExpenses;
 
                 data = [
@@ -2052,31 +2066,30 @@ const generateReport = async (req, res, next) => {
 
             case 'full':
             default:
-                // Full report with all data
-                const [allExpenses, allProjects, allUsers, allStocks, allMachines, allContractors] = await Promise.all([
-                    Expense.find(),
-                    Project.find(),
-                    User.find(),
-                    Stock.find(),
-                    Machine.find(),
-                    Contractor.find()
+                const [fullExps, fullProjs, fullUsers, fullStocks, fullMachines, fullContractors] = await Promise.all([
+                    Expense.find(filter).populate('projectId', 'name').populate('addedBy', 'name').lean(),
+                    Project.find().lean(),
+                    User.find().select('name email role').lean(),
+                    Stock.find(filter).populate('projectId', 'name').populate('vendorId', 'name').lean(),
+                    Machine.find(filter).populate('projectId', 'name').populate('vendorId', 'name').lean(),
+                    Contractor.find().lean()
                 ]);
 
                 data = {
                     summary: {
-                        totalProjects: allProjects.length,
-                        totalExpenses: allExpenses.reduce((sum, exp) => sum + (exp.amount || 0), 0),
-                        totalUsers: allUsers.length,
-                        totalStocks: allStocks.length,
-                        totalMachines: allMachines.length,
-                        totalContractors: allContractors.length
+                        totalProjects: fullProjs.length,
+                        totalExpenses: fullExps.reduce((sum, exp) => sum + (exp.amount || 0), 0),
+                        totalUsers: fullUsers.length,
+                        totalStocks: fullStocks.length,
+                        totalMachines: fullMachines.length,
+                        totalContractors: fullContractors.length
                     },
-                    expenses: allExpenses,
-                    projects: allProjects,
-                    users: allUsers,
-                    stocks: allStocks,
-                    machines: allMachines,
-                    contractors: allContractors
+                    expenses: fullExps,
+                    projects: fullProjs,
+                    users: fullUsers,
+                    stocks: fullStocks,
+                    machines: fullMachines,
+                    contractors: fullContractors
                 };
                 break;
         }

@@ -25,6 +25,12 @@ const todoSchema = new mongoose.Schema({
         enum: ['low', 'medium', 'high'],
         default: 'medium'
     },
+    workPercent: {
+        type: Number,
+        min: 0,
+        max: 100,
+        default: 0
+    },
     dueDate: {
         type: Date
     },

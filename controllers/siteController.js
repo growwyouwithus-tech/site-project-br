@@ -1876,7 +1876,13 @@ const payContractor = async (req, res, next) => {
 
         if (!user) return res.status(404).json({ success: false, error: 'User not found' });
 
-        const payAmount = parseFloat(amount);
+        // Fetch contractor to get name (required field in model)
+        const contractor = await Contractor.findById(contractorId);
+        if (!contractor) return res.status(404).json({ success: false, error: 'Contractor not found' });
+
+        const payAmount = parseFloat(amount || advance || 0);
+        if (payAmount <= 0) return res.status(400).json({ success: false, error: 'Invalid amount' });
+
         if (user.walletBalance < payAmount) {
             return res.status(400).json({ success: false, error: `Insufficient wallet balance. Current: ₹${user.walletBalance}` });
         }
@@ -1886,13 +1892,14 @@ const payContractor = async (req, res, next) => {
 
         const payment = new ContractorPayment({
             contractorId,
+            contractorName: contractor.name,
             projectId,
-            amount: payAmount,
-            advance: advance || 0,
-            deduction: deduction || 0,
+            amount: parseFloat(amount) || 0,
+            advance: parseFloat(advance) || 0,
+            deduction: parseFloat(deduction) || 0,
             date: new Date(),
             paymentMode: paymentMode || 'cash',
-            remarks: remarks || '',
+            remark: remarks || '',
             paidBy: userId
         });
         await payment.save();
@@ -1994,22 +2001,26 @@ const getMachineDetails = async (req, res, next) => {
         const startDate = machine.assignedAt ? new Date(machine.assignedAt) : machine.createdAt; // Fallback
         const endDate = machine.returnedAt ? new Date(machine.returnedAt) : new Date();
 
-        // Duration Calculation
-        const totalHours = (endDate - new Date(startDate)) / (1000 * 60 * 60);
+        // Duration Calculation - guard against tiny negative values due to clock skew
+        const totalHours = Math.max(0, (endDate - new Date(startDate)) / (1000 * 60 * 60));
 
-        // Calculate Pause Duration
+        // Calculate Pause Duration - only count pauses that happened AFTER this assignment started
         let totalPausedHours = 0;
         if (machine.rentPausedHistory && machine.rentPausedHistory.length > 0) {
-            machine.rentPausedHistory.forEach(pause => {
-                if (pause.resumedAt && pause.pausedAt) {
-                    totalPausedHours += (new Date(pause.resumedAt) - new Date(pause.pausedAt)) / (1000 * 60 * 60);
-                }
-            });
+            machine.rentPausedHistory
+                .filter(pause => new Date(pause.pausedAt) >= new Date(startDate)) // ignore old assignments
+                .forEach(pause => {
+                    if (pause.resumedAt && pause.pausedAt) {
+                        const paused = Math.max(0, (new Date(pause.resumedAt) - new Date(pause.pausedAt)) / (1000 * 60 * 60));
+                        totalPausedHours += paused;
+                    }
+                });
         }
 
-        // Handle currently paused
+        // Handle currently paused - only count from startDate onwards
         if (machine.isRentPaused && machine.rentPausedAt) {
-            totalPausedHours += (new Date() - new Date(machine.rentPausedAt)) / (1000 * 60 * 60);
+            const pauseStart = Math.max(new Date(machine.rentPausedAt), new Date(startDate));
+            totalPausedHours += Math.max(0, (new Date() - pauseStart) / (1000 * 60 * 60));
         }
 
         const billableHours = Math.max(0, totalHours - totalPausedHours);

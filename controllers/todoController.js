@@ -51,14 +51,15 @@ exports.getProjectTodos = async (req, res) => {
  */
 exports.updateTodoStatus = async (req, res) => {
     try {
-        const { status } = req.body;
+        const { status, workPercent } = req.body;
         const todo = await Todo.findById(req.params.id);
 
         if (!todo) {
             return res.status(404).json({ success: false, error: 'Todo not found' });
         }
 
-        todo.status = status;
+        if (status) todo.status = status;
+        if (workPercent !== undefined) todo.workPercent = Math.min(100, Math.max(0, parseInt(workPercent) || 0));
         todo.lastUpdatedBy = req.user._id;
         await todo.save();
 
