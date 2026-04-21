@@ -977,9 +977,9 @@ const payLabour = async (req, res, next) => {
         const advanceVal = parseFloat(advance) || 0;
         const finalAmount = amountVal - deductionVal - advanceVal;
 
-        // At least one of amount or advance must be provided
-        if (amountVal <= 0 && advanceVal <= 0) {
-            return res.status(400).json({ success: false, error: 'Amount or Advance must be greater than 0' });
+        // At least one of amount, deduction or advance must be provided
+        if (amountVal <= 0 && advanceVal <= 0 && deductionVal <= 0) {
+            return res.status(400).json({ success: false, error: 'Amount, Advance, or Deduction must be greater than 0' });
         }
 
         const user = await User.findById(userId);
@@ -1019,10 +1019,12 @@ const payLabour = async (req, res, next) => {
 
         await payment.save();
 
-        // Update labour pending payout (subtract the gross amount being cleared)
-        await Labour.findByIdAndUpdate(labourId, {
-            $inc: { pendingPayout: -amountVal }
-        });
+        // Update labour pending payout and advance balance
+        const reducePending = amountVal + deductionVal;
+        labour.pendingPayout -= reducePending;
+        if (advanceVal > 0) labour.advance = (labour.advance || 0) + advanceVal;
+        if (deductionVal > 0) labour.advance = Math.max(0, (labour.advance || 0) - deductionVal);
+        await labour.save();
 
         res.status(201).json({
             success: true,
@@ -1804,51 +1806,87 @@ const getWalletTransactions = async (req, res, next) => {
     }
 };
 
-// Add funds from third party to wallet
-const addThirdPartyFunds = async (req, res, next) => {
+// Get other site managers for funds transfer
+const getOtherManagers = async (req, res, next) => {
     try {
-        const { amount, source, remarks, paymentMode, date } = req.body;
         const userId = req.user.userId;
+        const managers = await User.find({
+            _id: { $ne: userId },
+            role: 'sitemanager',
+            active: true
+        }).select('name email phone');
+        
+        res.json({ success: true, data: managers });
+    } catch (error) {
+        next(error);
+    }
+};
+
+// Transfer funds to another site manager
+const transferFunds = async (req, res, next) => {
+    try {
+        const { amount, recipientId, remarks, paymentMode, date } = req.body;
+        const senderId = req.user.userId;
 
         const fundAmount = parseFloat(amount);
         if (isNaN(fundAmount) || fundAmount <= 0) {
             return res.status(400).json({ success: false, error: 'Invalid amount' });
         }
 
-        const user = await User.findById(userId);
-        if (!user) {
-            return res.status(404).json({ success: false, error: 'User not found' });
+        const sender = await User.findById(senderId);
+        const recipient = await User.findById(recipientId);
+
+        if (!sender) return res.status(404).json({ success: false, error: 'Sender not found' });
+        if (!recipient) return res.status(404).json({ success: false, error: 'Recipient not found' });
+
+        if (sender.walletBalance < fundAmount) {
+            return res.status(400).json({ success: false, error: 'Insufficient wallet balance for transfer' });
         }
 
-        // Create transaction record
-        const transaction = new Transaction({
+        // Create debit transaction for sender
+        const debitTx = new Transaction({
             amount: fundAmount,
-            type: 'credit',
-            category: 'third_party_funds',
+            type: 'debit',
+            category: 'manager_transfer',
             paymentMode: paymentMode || 'cash',
-            description: `Received from: ${source}${remarks ? ` - ${remarks}` : ''}`,
+            description: `Transferred to ${recipient.name}${remarks ? ` - ${remarks}` : ''}`,
             date: date || new Date(),
-            addedBy: userId,
-            relatedId: userId,
+            addedBy: senderId,
+            relatedId: recipientId,
             onModel: 'User'
         });
 
-        await transaction.save();
+        // Create credit transaction for recipient
+        const creditTx = new Transaction({
+            amount: fundAmount,
+            type: 'credit',
+            category: 'manager_transfer',
+            paymentMode: paymentMode || 'cash',
+            description: `Received from ${sender.name}${remarks ? ` - ${remarks}` : ''}`,
+            date: date || new Date(),
+            addedBy: recipientId, // Ownership belongs to recipient
+            relatedId: senderId,
+            onModel: 'User'
+        });
 
-        // Update user wallet balance
-        user.walletBalance += fundAmount;
-        await user.save();
+        await Promise.all([debitTx.save(), creditTx.save()]);
+
+        // Update balances
+        sender.walletBalance -= fundAmount;
+        recipient.walletBalance += fundAmount;
+
+        await Promise.all([sender.save(), recipient.save()]);
 
         res.status(201).json({
             success: true,
-            message: 'Funds added to wallet successfully',
+            message: 'Funds transferred successfully',
             data: {
-                transaction,
-                newBalance: user.walletBalance
+                transaction: debitTx,
+                newBalance: sender.walletBalance
             }
         });
     } catch (error) {
-        console.error('Error adding third party funds:', error);
+        console.error('Error transferring funds:', error);
         next(error);
     }
 };
@@ -1880,29 +1918,46 @@ const payContractor = async (req, res, next) => {
         const contractor = await Contractor.findById(contractorId);
         if (!contractor) return res.status(404).json({ success: false, error: 'Contractor not found' });
 
-        const payAmount = parseFloat(amount || advance || 0);
-        if (payAmount <= 0) return res.status(400).json({ success: false, error: 'Invalid amount' });
+        const amountVal = parseFloat(amount) || 0;
+        const advanceVal = parseFloat(advance) || 0;
+        const deductionVal = parseFloat(deduction) || 0;
 
-        if (user.walletBalance < payAmount) {
-            return res.status(400).json({ success: false, error: `Insufficient wallet balance. Current: ₹${user.walletBalance}` });
+        if (amountVal <= 0 && advanceVal <= 0 && deductionVal <= 0) {
+            return res.status(400).json({ success: false, error: 'Amount, Advance, or Deduction must be greater than 0' });
         }
 
-        user.walletBalance -= payAmount;
-        await user.save();
+        const payAmount = amountVal + advanceVal; // amount added to advance affects wallet? Actually in forms they are separate. Let's just use amountVal if amount is provided, or advanceVal. Usually it's one or the other.
+        const walletDeduction = amountVal > 0 ? amountVal : advanceVal;
+
+        if (walletDeduction > 0) {
+            if (user.walletBalance < walletDeduction) {
+                return res.status(400).json({ success: false, error: `Insufficient wallet balance. Current: ₹${user.walletBalance}` });
+            }
+            user.walletBalance -= walletDeduction;
+            await user.save();
+        }
 
         const payment = new ContractorPayment({
             contractorId,
             contractorName: contractor.name,
             projectId,
-            amount: parseFloat(amount) || 0,
-            advance: parseFloat(advance) || 0,
-            deduction: parseFloat(deduction) || 0,
+            amount: amountVal,
+            advance: advanceVal,
+            deduction: deductionVal,
             date: new Date(),
             paymentMode: paymentMode || 'cash',
             remark: remarks || '',
             paidBy: userId
         });
         await payment.save();
+
+        if (amountVal > 0 || deductionVal > 0 || advanceVal > 0) {
+            const reducePending = amountVal + deductionVal;
+            contractor.pendingAmount = Math.max(0, (contractor.pendingAmount || 0) - reducePending);
+            if (advanceVal > 0) contractor.advancePayment = (contractor.advancePayment || 0) + advanceVal;
+            if (deductionVal > 0) contractor.advancePayment = Math.max(0, (contractor.advancePayment || 0) - deductionVal);
+            await contractor.save();
+        }
         res.json({ success: true, message: 'Payment recorded', data: payment });
     } catch (error) {
         next(error);
@@ -1918,22 +1973,37 @@ const payVendor = async (req, res, next) => {
 
         if (!user || !vendor) return res.status(404).json({ success: false, error: 'User or Vendor not found' });
 
-        const payAmount = parseFloat(amount);
-        if (user.walletBalance < payAmount) {
-            return res.status(400).json({ success: false, error: `Insufficient wallet balance. Current: ₹${user.walletBalance}` });
+        const amountVal = parseFloat(amount) || 0;
+        const advanceVal = parseFloat(advance) || 0;
+        const deductionVal = parseFloat(deduction) || 0;
+
+        if (amountVal <= 0 && advanceVal <= 0 && deductionVal <= 0) {
+            return res.status(400).json({ success: false, error: 'Amount, Advance, or Deduction must be greater than 0' });
         }
 
-        user.walletBalance -= payAmount;
-        await user.save();
+        const walletDeduction = amountVal > 0 ? amountVal : advanceVal;
 
-        vendor.pendingAmount = Math.max(0, (vendor.pendingAmount || 0) - payAmount);
-        await vendor.save();
+        if (walletDeduction > 0) {
+            if (user.walletBalance < walletDeduction) {
+                return res.status(400).json({ success: false, error: `Insufficient wallet balance. Current: ₹${user.walletBalance}` });
+            }
+            user.walletBalance -= walletDeduction;
+            await user.save();
+        }
+
+        if (amountVal > 0 || deductionVal > 0 || advanceVal > 0) {
+            const reducePending = amountVal + deductionVal;
+            vendor.pendingAmount = Math.max(0, (vendor.pendingAmount || 0) - reducePending);
+            if (advanceVal > 0) vendor.advancePayment = (vendor.advancePayment || 0) + advanceVal;
+            if (deductionVal > 0) vendor.advancePayment = Math.max(0, (vendor.advancePayment || 0) - deductionVal);
+            await vendor.save();
+        }
 
         const payment = new VendorPayment({
             vendorId,
-            amount: payAmount,
-            advance: advance || 0,
-            deduction: deduction || 0,
+            amount: amountVal,
+            advance: advanceVal,
+            deduction: deductionVal,
             date: new Date(),
             paymentMode: paymentMode || 'cash',
             remarks: remarks || '',
@@ -2383,7 +2453,8 @@ module.exports = {
     getSiteMachines,
     toggleMachineRentPause,
     getWalletTransactions,
-    addThirdPartyFunds,
+    getOtherManagers,
+    transferFunds,
     getContractors,
     payContractor,
     payVendor,

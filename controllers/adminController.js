@@ -1636,6 +1636,7 @@ const getAccounts = async (req, res, next) => {
             Transaction.find(dateFilter.$gte || dateFilter.$lte ? { date: dateFilter } : {})
                 .populate('addedBy', 'name role')
                 .populate('projectId', 'name')
+                .populate('creditorId', 'name')
                 .sort('-date')
                 .limit(100)
                 .lean(),
@@ -1699,11 +1700,12 @@ const getAccounts = async (req, res, next) => {
                 type: t.type,
                 category: t.category,
                 paymentMode: normalizeMode(t.paymentMode),
-                source: t.addedBy ? `${t.addedBy.name} (${t.addedBy.role})` : 'System',
+                source: (t.category === 'capital' && t.creditorId) ? t.creditorId.name : (t.addedBy ? `${t.addedBy.name} (${t.addedBy.role})` : 'System'),
                 receivedFrom: t.category === 'third_party_funds' ? t.description.split(' - ')[0].replace('Received from: ', '') : null,
                 projectId: t.projectId,
                 relatedId: t.relatedId,
-                addedBy: t.addedBy 
+                addedBy: t.addedBy,
+                creditorId: t.creditorId
             });
             // Append Project Name to description if exists
             const lastIdx = allTransactions.length - 1;
@@ -1838,7 +1840,7 @@ const getAccounts = async (req, res, next) => {
 
 const addCapital = async (req, res, next) => {
     try {
-        const { amount, description, paymentMode, date } = req.body;
+        const { amount, description, paymentMode, date, creditorId, bankId, projectId } = req.body;
 
         const transaction = new Transaction({
             amount: parseFloat(amount),
@@ -1848,11 +1850,47 @@ const addCapital = async (req, res, next) => {
             paymentMode: paymentMode || 'bank',
             date: date || new Date(),
             addedBy: req.user.userId,
-            bankId: req.body.bankId || null,
-            projectId: req.body.projectId || null
+            bankId: bankId || null,
+            projectId: projectId || null,
+            creditorId: creditorId || null
         });
 
         await transaction.save();
+
+        // Update Bank Balance if bankId is present
+        if (bankId) {
+            const BankDetail = require('../models/BankDetail');
+            await BankDetail.findByIdAndUpdate(bankId, {
+                $inc: { currentBalance: parseFloat(amount) },
+                $push: {
+                    transactions: {
+                        type: 'credit',
+                        amount: parseFloat(amount),
+                        date: date || new Date(),
+                        description: description || 'Capital addition',
+                        refId: transaction._id
+                    }
+                }
+            });
+        }
+
+        // Update Creditor Balance if creditorId is present
+        if (creditorId) {
+            const Creditor = require('../models/Creditor');
+            await Creditor.findByIdAndUpdate(creditorId, {
+                $inc: { currentBalance: -parseFloat(amount) }, // Wallet logic: Giving money = Minus
+                $push: {
+                    transactions: {
+                        type: 'debit', // Wallet gives money = Debit
+                        amount: parseFloat(amount),
+                        date: date || new Date(),
+                        description: description || 'Capital Provided',
+                        refId: transaction._id,
+                        refModel: 'Transaction'
+                    }
+                }
+            });
+        }
 
         res.json({
             success: true,

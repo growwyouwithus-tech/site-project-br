@@ -45,6 +45,10 @@ const labourSchema = new mongoose.Schema({
     pendingPayout: {
         type: Number,
         default: 0
+    },
+    advance: {
+        type: Number,
+        default: 0
     }
 }, {
     timestamps: true

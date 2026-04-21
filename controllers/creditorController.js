@@ -133,11 +133,11 @@ const recordCreditorPayment = async (req, res, next) => {
             });
             await payment.save();
 
-            // 1. Update Source Creditor (CREDIT transaction - Borrowing/Using funds - Liability INCREASES)
-            // We owe the Source Creditor MORE because we used their funds.
-            sourceCreditor.currentBalance += paidAmount;
+            // 1. Update Source Creditor (DEBIT transaction - Giving funds out of their wallet - Balance DECREASES)
+            // User requested wallet logic: Creditor giving money = Minus
+            sourceCreditor.currentBalance -= paidAmount;
             sourceCreditor.transactions.push({
-                type: 'credit',
+                type: 'debit',
                 amount: paidAmount,
                 date: date || new Date(),
                 description: `used for paying ${creditor.name}`,
@@ -146,11 +146,11 @@ const recordCreditorPayment = async (req, res, next) => {
             });
             await sourceCreditor.save();
 
-            // 2. Update Target Creditor (DEBIT transaction - Payment Recd - Liability DECREASES)
-            // We owe the Target Creditor LESS because we paid them.
-            creditor.currentBalance -= paidAmount;
+            // 2. Update Target Creditor (CREDIT transaction - Receiving funds into their wallet - Balance INCREASES)
+            // User requested wallet logic: Creditor receiving money = Plus
+            creditor.currentBalance += paidAmount;
             creditor.transactions.push({
-                type: 'debit',
+                type: 'credit',
                 amount: paidAmount,
                 date: date || new Date(),
                 description: `Payment recd from ${sourceCreditor.name}`,
@@ -180,12 +180,12 @@ const recordCreditorPayment = async (req, res, next) => {
         await payment.save();
 
         // Update Creditor Balance
-        // Payment means we are paying them back, so balance (what we owe) decreases.
-        creditor.currentBalance -= paidAmount;
+        // User requested wallet logic: Company paying the creditor -> Creditor wallet receives money -> Balance INCREASES (+)
+        creditor.currentBalance += paidAmount;
 
         // Push transaction to creditor
         creditor.transactions.push({
-            type: 'debit', // Standard payment is Debit
+            type: 'credit', // Wallet receives money = Credit
             amount: paidAmount,
             date: date || new Date(),
             description: `Payment Recd: ${remarks || ''}`,

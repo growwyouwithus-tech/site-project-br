@@ -50,7 +50,8 @@ const {
   getSiteMachines,
   toggleMachineRentPause,
   getWalletTransactions,
-  addThirdPartyFunds,
+  getOtherManagers,
+  transferFunds,
   getContractors,
   payContractor,
   payVendor,
@@ -156,7 +157,8 @@ router.get('/equipments', getEquipments);
 
 // Wallet & Transactions
 router.get('/wallet-transactions', getWalletTransactions);
-router.post('/add-funds', addThirdPartyFunds);
+router.get('/other-managers', getOtherManagers);
+router.post('/transfer-funds', transferFunds);
 
 // Contractors
 router.get('/contractors', getContractors);
