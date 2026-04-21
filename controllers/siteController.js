@@ -324,7 +324,7 @@ const getLabourAttendance = async (req, res, next) => {
 
 const addStockIn = async (req, res, next) => {
     try {
-        const { projectId, vendorId, materialName, unit, quantity, unitPrice, remarks, paymentStatus } = req.body;
+        const { projectId, vendorId, materialName, unit, quantity, unitPrice, remarks, paymentStatus, vehicleNumber } = req.body;
         const userId = req.user.userId;
 
         const user = await User.findById(userId);
@@ -392,6 +392,7 @@ const addStockIn = async (req, res, next) => {
             photo: photoUrl,
             photos: photoUrls,
             remarks,
+            vehicleNumber: vehicleNumber || null,
             addedBy: userId,
             paymentStatus: status // Use the cleaned status
         });

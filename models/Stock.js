@@ -58,6 +58,10 @@ const stockSchema = new mongoose.Schema({
         type: String,
         trim: true
     },
+    vehicleNumber: {
+        type: String,
+        trim: true
+    },
     addedBy: {
         type: mongoose.Schema.Types.ObjectId,
         ref: 'User'
