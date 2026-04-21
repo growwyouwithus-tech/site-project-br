@@ -1268,12 +1268,13 @@ const getStocks = async (req, res, next) => {
         console.log(' Fetching stocks (ultra-fast)...');
         const startTime = Date.now();
 
-        // Get stocks without any population for maximum speed
+        // Get stocks with population for addedBy
         const stocks = await Stock.find()
-            .select('projectId vendorId materialName unit quantity unitPrice totalPrice remarks photo createdAt')
+            .select('projectId vendorId materialName unit quantity unitPrice totalPrice remarks photo vehicleNumber addedBy createdAt')
+            .populate('addedBy', 'name')
             .sort('-createdAt')
             .lean()
-            .maxTimeMS(2000); // 2 second timeout
+            .maxTimeMS(3000); // 3 second timeout
 
         const duration = Date.now() - startTime;
         console.log(` Ultra-fast stocks fetched in ${duration}ms (${stocks.length} items)`);
@@ -1335,6 +1336,7 @@ const createStock = async (req, res, next) => {
             photo: photoUrl,
             photos: photosUrls,
             remarks,
+            vehicleNumber: req.body.vehicleNumber || req.body.vehiclePlateNumber,
             addedBy: userId
         });
 
@@ -2038,6 +2040,7 @@ const allocateFunds = async (req, res, next) => {
 const generateReport = async (req, res, next) => {
     try {
         const { type, startDate, endDate } = req.query;
+        let data;
 
         const filter = {};
         if (startDate || endDate) {
@@ -2071,14 +2074,16 @@ const generateReport = async (req, res, next) => {
                 data = await Stock.find(filter)
                     .populate('projectId', 'name')
                     .populate('vendorId', 'name')
+                    .populate('addedBy', 'name')
+                    .select('materialName quantity unit unitPrice totalPrice vehicleNumber remarks addedBy createdAt projectId vendorId')
                     .lean();
                 break;
 
             case 'machines':
                 data = await Machine.find(filter)
                     .populate('projectId', 'name')
-                    .populate('vendorId', 'name')
                     .populate('assignedToContractor', 'name')
+                    .select('name model plateNumber category quantity status ownershipType vendorName perDayExpense assignedRentalPerDay rentalType projectId assignedToContractor createdAt')
                     .lean();
                 break;
 
@@ -2109,7 +2114,7 @@ const generateReport = async (req, res, next) => {
                     Project.find().lean(),
                     User.find().select('name email role').lean(),
                     Stock.find(filter).populate('projectId', 'name').populate('vendorId', 'name').lean(),
-                    Machine.find(filter).populate('projectId', 'name').populate('vendorId', 'name').lean(),
+                    Machine.find(filter).populate('projectId', 'name').populate('assignedToContractor', 'name').lean(),
                     Contractor.find().lean()
                 ]);
 
