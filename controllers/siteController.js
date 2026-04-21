@@ -1799,6 +1799,38 @@ const getWalletTransactions = async (req, res, next) => {
             });
         });
 
+        // 6. Outflows: Labour Payments
+        const labPayments = await LabourPayment.find({ userId, finalAmount: { $gt: 0 }, paymentMode: 'cash' }).populate('labourId', 'name').lean();
+        labPayments.forEach(p => {
+            transactions.push({
+                _id: p._id,
+                date: p.date || p.createdAt,
+                type: 'debit',
+                category: 'Labour Payment',
+                description: `Payment to ${p.labourId?.name || 'Labour'}`,
+                amount: p.finalAmount,
+                refModel: 'LabourPayment'
+            });
+        });
+
+        // 7. Wallet Transfers (Manager to Manager)
+        const transfers = await Transaction.find({
+            addedBy: userId,
+            category: 'manager_transfer'
+        }).sort('-date').lean();
+
+        transfers.forEach(t => {
+            transactions.push({
+                _id: t._id,
+                date: t.date,
+                type: t.type, // Use the type from transaction (credit/debit)
+                category: 'Wallet Transfer',
+                description: t.description,
+                amount: t.amount,
+                refModel: 'Transaction'
+            });
+        });
+
         transactions.sort((a, b) => new Date(b.date) - new Date(a.date));
 
         res.json({ success: true, data: transactions });
