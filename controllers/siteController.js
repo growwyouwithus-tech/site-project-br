@@ -64,7 +64,8 @@ const markAttendance = async (req, res, next) => {
         const { projectId, date, photo, remarks } = req.body;
         const userId = req.user.userId;
 
-        // Check if attendance already marked for this date AND project
+        // Check if attendance already marked for this date AND project (RESTRICTION REMOVED as per user request to allow multiple logs/managers)
+        /*
         const existingAttendance = await Attendance.findOne({
             userId,
             date,
@@ -77,6 +78,7 @@ const markAttendance = async (req, res, next) => {
                 error: 'Attendance already marked for this date at this site'
             });
         }
+        */
 
         const attendance = new Attendance({
             userId,
@@ -1786,7 +1788,7 @@ const getWalletTransactions = async (req, res, next) => {
         });
 
         // 5. Outflows: Vendor Payments
-        const vendorPayments = await VendorPayment.find({ paidBy: userId }).populate('vendorId', 'name').lean();
+        const vendorPayments = await VendorPayment.find({ recordedBy: userId }).populate('vendorId', 'name').lean();
         vendorPayments.forEach(p => {
             transactions.push({
                 _id: p._id,
@@ -2040,7 +2042,7 @@ const payVendor = async (req, res, next) => {
             date: new Date(),
             paymentMode: paymentMode || 'cash',
             remarks: remarks || '',
-            paidBy: userId
+            recordedBy: userId
         });
         await payment.save();
         res.json({ success: true, message: 'Payment recorded', data: payment });

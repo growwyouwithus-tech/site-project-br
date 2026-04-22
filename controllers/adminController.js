@@ -4,7 +4,7 @@
  */
 
 const mongoose = require('mongoose');
-const { User, Project, Vendor, VendorPayment, Expense, Labour, Contractor, ContractorPayment, LabourPayment, Machine, Stock, LabEquipment, ConsumableGoods, Equipment, Transaction, Transfer, BankDetail, Creditor, CreditorPayment, Attendance, LabourAttendance, ItemName, Notification } = require('../models');
+const { User, Project, Vendor, VendorPayment, Expense, Labour, Contractor, ContractorPayment, LabourPayment, Machine, Stock, LabEquipment, ConsumableGoods, Equipment, Transaction, Transfer, BankDetail, Creditor, CreditorPayment, Attendance, LabourAttendance, ItemName, Notification, DailyReport } = require('../models');
 
 // ============ DASHBOARD ============
 
@@ -113,12 +113,13 @@ const getProjectDetail = async (req, res, next) => {
 
         // Optimize: Fetch related data in parallel with specific project ID filters
         // This avoids fetching the entire collection and filtering in memory or frontend
-        const [expenses, labours, stocks, machines, contractors] = await Promise.all([
+        const [expenses, labours, stocks, machines, contractors, reports] = await Promise.all([
             Expense.find({ projectId: id }).lean(),
             Labour.find({ assignedSite: id }).lean(),
             Stock.find({ projectId: id }).populate('vendorId', 'name').sort('-createdAt').lean(),
             Machine.find({ projectId: id }).sort('-createdAt').lean(),
-            Contractor.find({ assignedProjects: id }).lean()
+            Contractor.find({ assignedProjects: id }).lean(),
+            DailyReport.find({ projectId: id }).sort('-createdAt').lean()
         ]);
 
         res.json({
@@ -129,7 +130,8 @@ const getProjectDetail = async (req, res, next) => {
                 labours,
                 stocks,
                 machines,
-                contractors
+                contractors,
+                reports
             }
         });
     } catch (error) {
@@ -915,6 +917,9 @@ const createContractorPayment = async (req, res, next) => {
             contractor.pendingAmount = newPending;
         }
 
+        // Track cumulative amount paid
+        contractor.totalPaid = (contractor.totalPaid || 0) + paidAmount;
+
         await contractor.save();
 
         // If bankId is provided, record transaction in bank
@@ -1070,12 +1075,30 @@ const updateMachine = async (req, res, next) => {
             }
         }
 
+        // Detect assignment transition (available -> in-use)
+        const isNowInUse = updates.status === 'in-use' && machine.status !== 'in-use';
+        
         // Normal updates
         Object.keys(updates).forEach(key => {
             if (key !== 'maintenanceCost' && key !== 'maintenanceDescription') {
                 machine[key] = updates[key];
             }
         });
+
+        // If newly assigned, record history
+        if (isNowInUse) {
+            if (!machine.assignmentHistory) machine.assignmentHistory = [];
+            
+            machine.assignmentHistory.push({
+                assignedAt: machine.assignedAt || new Date(),
+                projectId: machine.projectId,
+                assignedTo: machine.assignedToContractor || machine.projectId,
+                assignedModel: machine.assignedToContractor ? 'Contractor' : 'Project',
+                rate: machine.assignedRentalPerDay || machine.perDayExpense || 0,
+                rentType: machine.rentalType || 'perDay',
+                status: 'active'
+            });
+        }
 
         // Sanitize projectId
         if (updates.projectId === '' || updates.projectId === 'null') {
@@ -1126,14 +1149,7 @@ const returnRentedMachine = async (req, res, next) => {
             });
         }
 
-        // Verify machine is rented and in-use
-        if (machine.ownershipType !== 'rented') {
-            return res.status(400).json({
-                success: false,
-                error: 'Only rented equipment can be returned'
-            });
-        }
-
+        // Verify machine is in-use
         if (machine.status !== 'in-use') {
             return res.status(400).json({
                 success: false,
@@ -1209,10 +1225,20 @@ const returnRentedMachine = async (req, res, next) => {
         if (isNaN(totalRent)) totalRent = 0;
         totalRent = Math.round(totalRent * 100) / 100; // Round to 2 decimals
 
-        // Update machine status
-        machine.status = 'returned';
+        // Store IDs before clearing
+        const contractorId = machine.assignedToContractor;
+        const targetProjectId = machine.projectId;
+
+        // Update machine status and clear assignments
+        machine.status = machine.ownershipType === 'rented' ? 'returned' : 'available';
         machine.returnedAt = returnDate;
         machine.totalRentPaid = totalRent;
+        machine.projectId = null;
+        machine.assignedToContractor = null;
+        machine.assignedAsRental = false;
+        machine.assignedRentalPerDay = 0;
+        machine.isRentPaused = false;
+        machine.rentPausedAt = null;
 
         // Update History
         if (machine.assignmentHistory && machine.assignmentHistory.length > 0) {
@@ -1228,7 +1254,7 @@ const returnRentedMachine = async (req, res, next) => {
 
         // Create expense entry for rental
         const expense = new Expense({
-            projectId: machine.projectId,
+            projectId: targetProjectId,
             name: `Rental return: ${machine.name}${machine.plateNumber ? ' [' + machine.plateNumber + ']' : ''}`,
             amount: totalRent,
             category: 'machine_rental',
@@ -1238,10 +1264,20 @@ const returnRentedMachine = async (req, res, next) => {
         await expense.save();
 
         // Update project expenses if projectId exists
-        if (machine.projectId) {
+        if (targetProjectId) {
             await Project.findByIdAndUpdate(
-                machine.projectId,
+                targetProjectId,
                 { $inc: { expenses: totalRent } }
+            );
+        }
+
+        // Update contractor's pending amount if assigned
+        // Machine rent is a DEDUCTION from contractor's total earnings
+        if (contractorId) {
+            const Contractor = require('../models/Contractor');
+            await Contractor.findByIdAndUpdate(
+                contractorId,
+                { $inc: { pendingAmount: -totalRent } }
             );
         }
 
@@ -2822,6 +2858,8 @@ const deleteContractorPayment = async (req, res, next) => {
             if (amountLeft > 0) {
                 contractor.pendingAmount = (contractor.pendingAmount || 0) + amountLeft;
             }
+            // Reverse the totalPaid
+            contractor.totalPaid = Math.max(0, (contractor.totalPaid || 0) - payment.amount);
             await contractor.save();
         }
 

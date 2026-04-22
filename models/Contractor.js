@@ -41,6 +41,10 @@ const contractorSchema = new mongoose.Schema({
         type: Number,
         default: 0
     },
+    totalPaid: {
+        type: Number,
+        default: 0
+    },
     advancePayment: {
         type: Number,
         default: 0
