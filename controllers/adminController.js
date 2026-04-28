@@ -1306,7 +1306,7 @@ const getStocks = async (req, res, next) => {
 
         // Get stocks with population for addedBy
         const stocks = await Stock.find()
-            .select('projectId vendorId materialName unit quantity unitPrice totalPrice remarks photo vehicleNumber addedBy createdAt')
+            .select('projectId vendorId materialName unit quantity unitPrice totalPrice remarks photo photos vehicleNumber addedBy createdAt')
             .populate('addedBy', 'name')
             .sort('-createdAt')
             .lean()
