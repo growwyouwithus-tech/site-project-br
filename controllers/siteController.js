@@ -1,8 +1,4 @@
-/**
- * Site Manager Controller - MongoDB Version
- * Handles all site manager-specific operations with MongoDB
- */
-
+const mongoose = require('mongoose');
 const { User, Project, Vendor, Expense, Labour, LabourAttendance, LabourPayment, Stock, StockOut, Machine, Transfer, DailyReport, LabEquipment, ConsumableGoods, Equipment, Attendance, Contractor, ContractorPayment, VendorPayment, Transaction, ItemName } = require('../models');
 const Notification = require('../models/Notification');
 
@@ -1591,12 +1587,14 @@ const getEquipments = async (req, res, next) => {
 // Get machines assigned to site manager's projects
 const getSiteMachines = async (req, res, next) => {
     try {
-        const { userId } = req.user;
-        const { projectId } = req.query; // Support filtering by project
+        const userId = req.user.userId;
+        const { projectId } = req.query; 
         const user = await User.findById(userId);
+        console.log('🔍 getSiteMachines: User ID:', userId);
+        console.log('🔍 getSiteMachines: User Assigned Sites:', user?.assignedSites);
 
         if (!user || !user.assignedSites || user.assignedSites.length === 0) {
-            console.log('âš ï¸ User has no assigned sites:', user);
+            console.log('⚠️ User has no assigned sites:', user);
             return res.json({
                 success: true,
                 data: [],
@@ -1605,40 +1603,43 @@ const getSiteMachines = async (req, res, next) => {
         }
 
         // Determine which projects to filter by
-        let targetProjects = user.assignedSites;
-
+        let targetProjects = user.assignedSites.map(site => site.toString());
+        
         // If specific project requested, validate and use only that
-        if (projectId) {
+        if (projectId && projectId !== 'null' && projectId !== 'undefined') {
             const isAssigned = user.assignedSites.some(site => site.toString() === projectId);
             if (isAssigned) {
                 targetProjects = [projectId];
             } else {
-                // If requesting a project they aren't assigned to, return empty or error
-                // For safety, let's just scope to their actually assigned sites if the request is bad,
-                // or simpler: just return empty for that specific invalid project filter.
-                // But strict isolation means we strictly respect valid filters.
-                targetProjects = [projectId]; // effectively filtering by query, assuming middleware checked auth. 
-                // But better to intersect:
-                // targetProjects = user.assignedSites.filter(site => site.toString() === projectId);
+                targetProjects = [];
             }
         }
 
+        // Convert to ObjectIds for reliable matching
+        const targetObjectIds = targetProjects.map(id => new mongoose.Types.ObjectId(id));
+
         // 1. Find all contractors assigned to THESE specific target projects
         const contractors = await Contractor.find({
-            assignedProjects: { $in: targetProjects }
+            assignedProjects: { $in: targetObjectIds }
         });
         const contractorIds = contractors.map(c => c._id);
 
         // 2. Find machines assigned to THESE sites OR to THESE contractors
         const machines = await Machine.find({
             $or: [
-                { projectId: { $in: targetProjects } },
+                { projectId: { $in: targetObjectIds } },
                 { assignedToContractor: { $in: contractorIds } }
             ],
             status: { $in: ['in-use', 'available'] }
         })
-            .populate('assignedToContractor', 'name') // Populate contractor details if needed
+            .populate('assignedToContractor', 'name')
             .sort('-createdAt');
+
+        console.log('✅ getSiteMachines: Found machines count:', machines.length);
+        if (machines.length > 0) {
+            console.log('✅ getSiteMachines: Sample machine projectId:', machines[0].projectId);
+            console.log('✅ getSiteMachines: Sample machine assignedToContractor:', machines[0].assignedToContractor);
+        }
 
         res.json({
             success: true,
@@ -2098,22 +2099,35 @@ const getMachineDetails = async (req, res, next) => {
         const machine = await Machine.findById(id).populate('assignedToContractor', 'name');
 
         if (!machine) return res.status(404).json({ success: false, error: 'Machine not found' });
-
+        
         let totalRent = 0;
         let duration = 0;
+        // Determine assignment start - use assignedAt or fallback to first history record or createdAt
+        let startDate = machine.assignedAt ? new Date(machine.assignedAt) : null;
+        
+        if (!startDate && machine.rentPausedHistory && machine.rentPausedHistory.length > 0) {
+            startDate = new Date(machine.rentPausedHistory[0].pausedAt);
+        }
+        
+        if (!startDate) startDate = machine.createdAt;
 
-        // Determine assignment start
-        const startDate = machine.assignedAt ? new Date(machine.assignedAt) : machine.createdAt; // Fallback
-        const endDate = machine.returnedAt ? new Date(machine.returnedAt) : new Date();
-
-        // Duration Calculation - guard against tiny negative values due to clock skew
-        const totalHours = Math.max(0, (endDate - new Date(startDate)) / (1000 * 60 * 60));
+        const now = new Date();
+        const endDate = machine.returnedAt ? new Date(machine.returnedAt) : now;
+        
+        // Ensure endDate is not before startDate
+        let effectiveEndDate = endDate;
+        if (endDate < startDate) {
+            effectiveEndDate = now;
+        }
+        
+        const totalHours = Math.max(0, (effectiveEndDate - startDate) / (1000 * 60 * 60));
+        console.log(`🔍 DEBUG: Machine ${id} | Start: ${startDate.toISOString()} | End: ${effectiveEndDate.toISOString()} | TotalH: ${totalHours}`);
 
         // Calculate Pause Duration - only count pauses that happened AFTER this assignment started
         let totalPausedHours = 0;
         if (machine.rentPausedHistory && machine.rentPausedHistory.length > 0) {
             machine.rentPausedHistory
-                .filter(pause => new Date(pause.pausedAt) >= new Date(startDate)) // ignore old assignments
+                .filter(pause => new Date(pause.pausedAt) >= startDate)
                 .forEach(pause => {
                     if (pause.resumedAt && pause.pausedAt) {
                         const paused = Math.max(0, (new Date(pause.resumedAt) - new Date(pause.pausedAt)) / (1000 * 60 * 60));
@@ -2124,18 +2138,21 @@ const getMachineDetails = async (req, res, next) => {
 
         // Handle currently paused - only count from startDate onwards
         if (machine.isRentPaused && machine.rentPausedAt) {
-            const pauseStart = Math.max(new Date(machine.rentPausedAt), new Date(startDate));
-            totalPausedHours += Math.max(0, (new Date() - pauseStart) / (1000 * 60 * 60));
+            const pauseStart = new Date(Math.max(new Date(machine.rentPausedAt), startDate));
+            totalPausedHours += Math.max(0, (now - pauseStart) / (1000 * 60 * 60));
         }
 
         const billableHours = Math.max(0, totalHours - totalPausedHours);
+        const rate = machine.assignedRentalPerDay || 0;
+
+        console.log(`📊 Calc for Machine ${id}: TotalH: ${totalHours}, PausedH: ${totalPausedHours}, BillableH: ${billableHours}, Rate: ${rate}`);
 
         if (machine.rentalType === 'perHour') {
             duration = billableHours;
-            totalRent = billableHours * (machine.assignedRentalPerDay || 0);
+            totalRent = billableHours * rate;
         } else {
             duration = billableHours / 24;
-            totalRent = Math.ceil(duration) * (machine.assignedRentalPerDay || 0);
+            totalRent = Math.ceil(duration) * rate;
         }
 
         res.json({
@@ -2146,11 +2163,11 @@ const getMachineDetails = async (req, res, next) => {
                     startDate,
                     endDate: machine.returnedAt ? machine.returnedAt : new Date(),
                     isReturned: !!machine.returnedAt,
-                    totalDurationHours: totalHours.toFixed(2),
-                    totalPausedHours: totalPausedHours.toFixed(2),
-                    billableHours: billableHours.toFixed(2),
-                    billableDays: (billableHours / 24).toFixed(2),
-                    rate: machine.assignedRentalPerDay,
+                    totalDurationHours: totalHours,
+                    totalPausedHours: totalPausedHours,
+                    billableHours: billableHours,
+                    billableDays: (billableHours / 24),
+                    rate: rate,
                     type: machine.rentalType,
                     estimatedTotalRent: Math.round(totalRent)
                 }
