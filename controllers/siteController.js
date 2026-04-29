@@ -120,6 +120,27 @@ const getMyAttendance = async (req, res, next) => {
     }
 };
 
+// Check if today's attendance is marked
+const checkAttendanceStatus = async (req, res, next) => {
+    try {
+        const userId = req.user.userId;
+        const todayStr = new Date().toISOString().split('T')[0];
+
+        const attendance = await Attendance.findOne({
+            userId,
+            date: todayStr
+        });
+
+        res.json({
+            success: true,
+            isMarked: !!attendance,
+            data: attendance
+        });
+    } catch (error) {
+        next(error);
+    }
+};
+
 // ============ LABOUR ============
 
 // Get all labours for assigned sites
@@ -397,6 +418,23 @@ const addStockIn = async (req, res, next) => {
 
         await newStock.save();
 
+        // If paid, create a corresponding Expense record so it shows in Expenses ledger
+        if (status === 'paid') {
+            const materialExpense = new Expense({
+                projectId,
+                name: `Material Purchase: ${materialName}`,
+                amount: totalPrice,
+                category: 'material',
+                remarks: `Auto-generated from Stock In. Vendor: ${vendorId || 'N/A'}. ${remarks || ''}`,
+                receipt: photoUrl,
+                addedBy: userId
+            });
+            await materialExpense.save();
+
+            // Update project expenses total
+            await Project.findByIdAndUpdate(projectId, { $inc: { expenses: totalPrice } });
+        }
+
         // Update vendor's Stats
         if (vendorId) {
             const update = {
@@ -404,7 +442,7 @@ const addStockIn = async (req, res, next) => {
             };
 
             // Only increase pending amount if NOT paid
-            if (paymentStatus !== 'paid') {
+            if (status !== 'paid') {
                 update.$inc.pendingAmount = totalPrice;
             }
 
@@ -969,12 +1007,12 @@ const getMaterials = async (req, res, next) => {
 const payLabour = async (req, res, next) => {
     try {
         const { labourId, amount, deduction, advance, paymentMode, remarks } = req.body;
-        const userId = req.user.userId;
-
         const amountVal = parseFloat(amount) || 0;
         const deductionVal = parseFloat(deduction) || 0;
         const advanceVal = parseFloat(advance) || 0;
-        const finalAmount = amountVal - deductionVal - advanceVal;
+        
+        // Money actually leaving the site manager's pocket/wallet
+        const finalAmount = Math.max(0, (amountVal - deductionVal) + advanceVal);
 
         // At least one of amount, deduction or advance must be provided
         if (amountVal <= 0 && advanceVal <= 0 && deductionVal <= 0) {
@@ -991,16 +1029,15 @@ const payLabour = async (req, res, next) => {
             return res.status(404).json({ success: false, error: 'Labour not found' });
         }
 
-        // Check sufficient balance if final amount > 0 AND payment is cash
-        if (finalAmount > 0 && paymentMode === 'cash') {
+        // Deduct from wallet regardless of payment mode (since it's from Site Manager's balance)
+        if (finalAmount > 0) {
             if (user.walletBalance < finalAmount) {
                 return res.status(400).json({
                     success: false,
-                    error: `Insufficient wallet balance. Current: â‚¹${user.walletBalance}`
+                    error: `Insufficient wallet balance. Required: ₹${finalAmount}, Current: ₹${user.walletBalance}`
                 });
             }
 
-            // Deduct from wallet
             user.walletBalance -= finalAmount;
             await user.save();
         }
@@ -1803,7 +1840,7 @@ const getWalletTransactions = async (req, res, next) => {
         });
 
         // 6. Outflows: Labour Payments
-        const labPayments = await LabourPayment.find({ userId, finalAmount: { $gt: 0 }, paymentMode: 'cash' }).populate('labourId', 'name').lean();
+        const labPayments = await LabourPayment.find({ userId, finalAmount: { $gt: 0 } }).populate('labourId', 'name').lean();
         labPayments.forEach(p => {
             transactions.push({
                 _id: p._id,
@@ -1962,14 +1999,14 @@ const payContractor = async (req, res, next) => {
             return res.status(400).json({ success: false, error: 'Amount, Advance, or Deduction must be greater than 0' });
         }
 
-        const payAmount = amountVal + advanceVal; // amount added to advance affects wallet? Actually in forms they are separate. Let's just use amountVal if amount is provided, or advanceVal. Usually it's one or the other.
-        const walletDeduction = amountVal > 0 ? amountVal : advanceVal;
+        // Total money leaving the site manager's wallet
+        const finalAmount = Math.max(0, (amountVal - deductionVal) + advanceVal);
 
-        if (walletDeduction > 0) {
-            if (user.walletBalance < walletDeduction) {
-                return res.status(400).json({ success: false, error: `Insufficient wallet balance. Current: ₹${user.walletBalance}` });
+        if (finalAmount > 0) {
+            if (user.walletBalance < finalAmount) {
+                return res.status(400).json({ success: false, error: `Insufficient wallet balance. Required: ₹${finalAmount}, Current: ₹${user.walletBalance}` });
             }
-            user.walletBalance -= walletDeduction;
+            user.walletBalance -= finalAmount;
             await user.save();
         }
 
@@ -2017,13 +2054,14 @@ const payVendor = async (req, res, next) => {
             return res.status(400).json({ success: false, error: 'Amount, Advance, or Deduction must be greater than 0' });
         }
 
-        const walletDeduction = amountVal > 0 ? amountVal : advanceVal;
+        // Total money leaving the site manager's wallet
+        const finalAmount = Math.max(0, (amountVal - deductionVal) + advanceVal);
 
-        if (walletDeduction > 0) {
-            if (user.walletBalance < walletDeduction) {
-                return res.status(400).json({ success: false, error: `Insufficient wallet balance. Current: ₹${user.walletBalance}` });
+        if (finalAmount > 0) {
+            if (user.walletBalance < finalAmount) {
+                return res.status(400).json({ success: false, error: `Insufficient wallet balance. Required: ₹${finalAmount}, Current: ₹${user.walletBalance}` });
             }
-            user.walletBalance -= walletDeduction;
+            user.walletBalance -= finalAmount;
             await user.save();
         }
 
@@ -2518,5 +2556,6 @@ module.exports = {
     getContractorDetails,
     getProjectDetails,
     getContractorPayments,
-    getVendorPayments
+    getVendorPayments,
+    checkAttendanceStatus
 };

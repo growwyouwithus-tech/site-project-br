@@ -63,7 +63,8 @@ const {
   getContractorDetails,
   getProjectDetails,
   getContractorPayments,
-  getVendorPayments
+  getVendorPayments,
+  checkAttendanceStatus
 } = require('../controllers/siteController');
 
 const {
@@ -81,6 +82,7 @@ router.get('/dashboard', getDashboard);
 // Attendance (Site Manager's own)
 router.post('/attendance', attendanceValidation, markAttendance);
 router.get('/attendance', getMyAttendance);
+router.get('/attendance-status', checkAttendanceStatus);
 
 // Labour
 router.get('/labours', getLabours);
