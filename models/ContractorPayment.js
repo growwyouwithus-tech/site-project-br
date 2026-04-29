@@ -54,6 +54,13 @@ const contractorPaymentSchema = new mongoose.Schema({
     machineRent: {
         type: Number,
         default: 0
+    },
+    isAdvance: {
+        type: Boolean,
+        default: false
+    },
+    receiptUrl: {
+        type: String
     }
 }, {
     timestamps: true

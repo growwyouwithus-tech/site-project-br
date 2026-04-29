@@ -880,7 +880,7 @@ const getContractorPayments = async (req, res, next) => {
 
 const createContractorPayment = async (req, res, next) => {
     try {
-        const { contractorId, contractorName, date, amount, paymentMode, remark, machineRent, rentDeducted, bankId, creditorId } = req.body;
+        const { contractorId, contractorName, date, amount, paymentMode, remarks, machineRent, rentDeducted, bankId, creditorId, isAdvance } = req.body;
         const userId = req.user.userId;
 
         const contractor = await Contractor.findById(contractorId);
@@ -888,33 +888,49 @@ const createContractorPayment = async (req, res, next) => {
             return res.status(404).json({ success: false, error: 'Contractor not found' });
         }
 
+        const paidAmount = parseFloat(amount);
+        const receiptUrl = req.file ? `/uploads/${req.file.filename}` : undefined;
+
         // Create Payment Record
         const payment = new ContractorPayment({
             contractorId,
             contractorName: contractor.name,
-            amount: parseFloat(amount),
+            amount: paidAmount,
             date: date || Date.now(),
-            remark: remark,
+            remark: remarks, // using remarks from body
             paymentMode: paymentMode || 'cash',
             bankId: bankId && bankId !== '' ? bankId : undefined,
             creditorId: creditorId && creditorId !== '' ? creditorId : undefined,
             recordedBy: userId,
             machineRent: machineRent ? parseFloat(machineRent) : 0,
-            rentDeducted: rentDeducted ? parseFloat(rentDeducted) : 0
+            rentDeducted: rentDeducted ? parseFloat(rentDeducted) : 0,
+            isAdvance: isAdvance === 'true' || isAdvance === true,
+            receiptUrl
         });
         await payment.save();
 
         // Update Contractor Financials (Advance/Pending)
-        const paidAmount = parseFloat(amount);
-        const currentPending = contractor.pendingAmount || 0;
+        let currentPending = contractor.pendingAmount || 0;
         const currentAdvance = contractor.advancePayment || 0;
+        const totalWorkAmount = (contractor.distanceValue || 0) * (contractor.expensePerUnit || 0);
 
-        let newPending = currentPending - paidAmount;
-        if (newPending < 0) {
-            contractor.advancePayment = currentAdvance + Math.abs(newPending);
-            contractor.pendingAmount = 0;
+        // If pending is 0 but total work exists and totalPaid is 0, initialize pending
+        if (currentPending === 0 && totalWorkAmount > 0 && (contractor.totalPaid || 0) === 0) {
+            currentPending = totalWorkAmount;
+        }
+
+        if (isAdvance === 'true' || isAdvance === true) {
+            // Explicit Advance: Just add to advance account
+            contractor.advancePayment = currentAdvance + paidAmount;
         } else {
-            contractor.pendingAmount = newPending;
+            // Regular Payment: Subtract from pending, rest to advance
+            let newPending = currentPending - paidAmount;
+            if (newPending < 0) {
+                contractor.advancePayment = currentAdvance + Math.abs(newPending);
+                contractor.pendingAmount = 0;
+            } else {
+                contractor.pendingAmount = newPending;
+            }
         }
 
         // Track cumulative amount paid

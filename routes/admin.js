@@ -167,7 +167,7 @@ router.post('/contractors', uploadMultiple, createContractor);
 router.put('/contractors/:id', updateContractor);
 router.delete('/contractors/:id', deleteContractor);
 router.get('/contractors/:contractorId/payments', getContractorPayments);
-router.post('/contractors/payments', createContractorPayment);
+router.post('/contractors/payments', uploadReceipt, createContractorPayment);
 router.delete('/contractors/payments/:id', deleteContractorPayment);
 
 // Transfers
