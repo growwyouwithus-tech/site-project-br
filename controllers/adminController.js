@@ -640,15 +640,79 @@ const getVendorPayments = async (req, res, next) => {
 // Get all expenses
 const getExpenses = async (req, res, next) => {
     try {
-        const expenses = await Expense.find()
-            .populate('projectId', 'name location')
-            .populate('addedBy', 'name email')
-            .sort('-createdAt')
-            .lean();
+        const [expenses, vendorPayments, contractorPayments, labourPayments] = await Promise.all([
+            Expense.find()
+                .populate('projectId', 'name location')
+                .populate('addedBy', 'name email')
+                .sort('-createdAt')
+                .lean(),
+            VendorPayment.find()
+                .populate('vendorId', 'name')
+                .populate('recordedBy', 'name')
+                .sort('-createdAt')
+                .lean(),
+            ContractorPayment.find()
+                .populate('contractorId', 'name')
+                .populate('projectId', 'name')
+                .populate('paidBy', 'name')
+                .sort('-createdAt')
+                .lean(),
+            LabourPayment.find()
+                .populate('labourId', 'name')
+                .populate('userId', 'name')
+                .sort('-createdAt')
+                .lean()
+        ]);
+
+        // Transform vendor payments to expense format
+        const vendorExpenses = vendorPayments.map(vp => ({
+            _id: vp._id,
+            projectId: { name: 'Vendor Payment' },
+            name: `Payment to ${vp.vendorId?.name || 'Vendor'}`,
+            amount: vp.amount || 0,
+            category: 'vendor',
+            voucherNumber: vp._id.toString().slice(-8).toUpperCase(),
+            remarks: vp.remarks || 'Vendor payment',
+            addedBy: vp.recordedBy,
+            createdAt: vp.date || vp.createdAt,
+            isPayment: true
+        }));
+
+        // Transform contractor payments to expense format
+        const contractorExpenses = contractorPayments.map(cp => ({
+            _id: cp._id,
+            projectId: cp.projectId || { name: 'Contractor Payment' },
+            name: `Payment to ${cp.contractorId?.name || cp.contractorName || 'Contractor'}`,
+            amount: cp.amount || 0,
+            category: 'contractor',
+            voucherNumber: cp._id.toString().slice(-8).toUpperCase(),
+            remarks: cp.remark || 'Contractor payment',
+            addedBy: cp.paidBy,
+            createdAt: cp.date || cp.createdAt,
+            isPayment: true
+        }));
+
+        // Transform labour payments to expense format
+        const labourExpenses = labourPayments.map(lp => ({
+            _id: lp._id,
+            projectId: { name: 'Labour Payment' },
+            name: `Payment to ${lp.labourId?.name || 'Labour'}`,
+            amount: lp.amount || 0,
+            category: 'labour',
+            voucherNumber: lp._id.toString().slice(-8).toUpperCase(),
+            remarks: lp.remarks || 'Labour payment',
+            addedBy: lp.userId,
+            createdAt: lp.date || lp.createdAt,
+            isPayment: true
+        }));
+
+        // Combine all and sort by date
+        const allExpenses = [...expenses, ...vendorExpenses, ...contractorExpenses, ...labourExpenses]
+            .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
 
         res.json({
             success: true,
-            data: expenses
+            data: allExpenses
         });
     } catch (error) {
         next(error);
@@ -1729,10 +1793,14 @@ const getAccounts = async (req, res, next) => {
                 .lean(),
             VendorPayment.find(dateFilter.$gte || dateFilter.$lte ? { date: dateFilter } : {})
                 .populate('vendorId', 'name')
+                .populate('bankId', 'bankName')
+                .populate('creditorId', 'name')
                 .sort('-date')
                 .limit(100)
                 .lean(),
             ContractorPayment.find(dateFilter.$gte || dateFilter.$lte ? { date: dateFilter } : {})
+                .populate('bankId', 'bankName')
+                .populate('creditorId', 'name')
                 .sort('-date')
                 .limit(100)
                 .lean(),
@@ -1743,6 +1811,7 @@ const getAccounts = async (req, res, next) => {
                 .lean(),
             CreditorPayment.find(dateFilter.$gte || dateFilter.$lte ? { date: dateFilter } : {})
                 .populate('creditorId', 'name')
+                .populate('bankId', 'bankName')
                 .sort('-date')
                 .limit(100)
                 .lean()
@@ -1819,12 +1888,12 @@ const getAccounts = async (req, res, next) => {
                 _id: vp._id,
                 refModel: 'VendorPayment',
                 date: ensureDate(vp.date, vp.createdAt),
-                description: `Payment to ${vp.vendorId?.name || 'Vendor'}${vp.remark ? ` - ${vp.remark}` : ''}`,
+                description: `Payment to ${vp.vendorId?.name || 'Vendor'}${vp.remarks ? ` - ${vp.remarks}` : ''}`,
                 amount: vp.amount || 0,
                 type: 'debit',
                 category: 'vendor_payment',
                 paymentMode: normalizeMode(vp.paymentMode),
-                source: 'Vendor Payment'
+                source: vp.bankId ? `Bank: ${vp.bankId.bankName}` : (vp.creditorId ? `Creditor: ${vp.creditorId.name}` : (vp.paymentMode === 'cash' ? 'Main Cash' : vp.paymentMode))
             });
         });
 
@@ -1839,7 +1908,7 @@ const getAccounts = async (req, res, next) => {
                 type: 'debit',
                 category: 'contractor_payment',
                 paymentMode: normalizeMode(cp.paymentMode),
-                source: 'Contractor Payment'
+                source: cp.bankId ? `Bank: ${cp.bankId.bankName}` : (cp.creditorId ? `Creditor: ${cp.creditorId.name}` : (cp.paymentMode === 'cash' ? 'Main Cash' : cp.paymentMode))
             });
         });
 
@@ -1854,7 +1923,7 @@ const getAccounts = async (req, res, next) => {
                 type: 'debit',
                 category: 'creditor_payment',
                 paymentMode: normalizeMode(cp.paymentMode),
-                source: 'Creditor Payment'
+                source: cp.bankId ? `Bank: ${cp.bankId.bankName}` : (cp.paymentMode === 'cash' ? 'Main Cash' : cp.paymentMode)
             });
         });
 
@@ -1892,7 +1961,7 @@ const getAccounts = async (req, res, next) => {
 
         // Total Expenses (for display purposes)
         const totalExpenses = allTransactions
-            .filter(t => t.type === 'debit')
+            .filter(t => t.type === 'debit' && t.category !== 'creditor_payment')
             .reduce((sum, t) => sum + (t.amount || 0), 0);
 
         const totalBankTransactions = allTransactions
