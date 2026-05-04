@@ -530,26 +530,44 @@ const recordVendorPayment = async (req, res, next) => {
             });
         }
 
-        const paidAmount = parseFloat(amount);
+        const paidAmount = parseFloat(amount || 0);
+        const deductionAmount = parseFloat(req.body.deduction || 0);
+        const advanceRecoveredAmount = parseFloat(req.body.advanceRecovered || 0);
+        
         const currentPending = vendor.pendingAmount || 0;
-        const currentAdvance = vendor.advancePayment || 0; // Ensure field exists
+        const currentAdvance = vendor.advancePayment || 0;
 
-        let newPending = currentPending - paidAmount;
+        // Total amount that reduces the pending balance
+        // (Cash Paid + Manual Deduction + Advance Adjusted)
+        const totalReduction = paidAmount + deductionAmount + advanceRecoveredAmount;
+
+        let newPending = currentPending - totalReduction;
+        let newAdvance = currentAdvance - advanceRecoveredAmount;
+
         if (newPending < 0) {
-            vendor.advancePayment = currentAdvance + Math.abs(newPending);
-            vendor.pendingAmount = 0;
-        } else {
-            vendor.pendingAmount = newPending;
+            // If total reduction exceeds pending, the excess goes to advance
+            // Note: usually only the cash part creates advance, but we follow the logic:
+            // excess reduction increases advance account
+            newAdvance += Math.abs(newPending);
+            newPending = 0;
         }
+
+        vendor.pendingAmount = newPending;
+        vendor.advancePayment = Math.max(0, newAdvance);
 
         const newPayment = new VendorPayment({
             vendorId,
             amount: paidAmount,
+            deduction: deductionAmount,
+            advanceRecovered: advanceRecoveredAmount,
             date: date || new Date(),
             paymentMode,
             bankId: bankId && bankId !== '' ? bankId : undefined,
             creditorId: creditorId && creditorId !== '' ? creditorId : undefined,
-            remarks
+            remarks,
+            recordedBy: req.user._id,
+            isAdvance: req.body.isAdvance === 'true' || req.body.isAdvance === true,
+            receiptUrl: req.body.receiptUrl
         });
 
         await vendor.save();
@@ -880,7 +898,7 @@ const getContractorPayments = async (req, res, next) => {
 
 const createContractorPayment = async (req, res, next) => {
     try {
-        const { contractorId, contractorName, date, amount, paymentMode, remarks, machineRent, rentDeducted, bankId, creditorId, isAdvance } = req.body;
+        const { contractorId, contractorName, date, amount, paymentMode, remarks, machineRent, rentDeducted, bankId, creditorId, isAdvance, advanceRecovered } = req.body;
         const userId = req.user.userId;
 
         const contractor = await Contractor.findById(contractorId);
@@ -888,7 +906,9 @@ const createContractorPayment = async (req, res, next) => {
             return res.status(404).json({ success: false, error: 'Contractor not found' });
         }
 
-        const paidAmount = parseFloat(amount);
+        const paidAmount = parseFloat(amount) || 0;
+        const rentDeductedVal = parseFloat(rentDeducted) || 0;
+        const advanceRecoveredVal = parseFloat(advanceRecovered) || 0;
         const receiptUrl = req.file ? `/uploads/${req.file.filename}` : undefined;
 
         // Create Payment Record
@@ -902,8 +922,7 @@ const createContractorPayment = async (req, res, next) => {
             bankId: bankId && bankId !== '' ? bankId : undefined,
             creditorId: creditorId && creditorId !== '' ? creditorId : undefined,
             recordedBy: userId,
-            machineRent: machineRent ? parseFloat(machineRent) : 0,
-            rentDeducted: rentDeducted ? parseFloat(rentDeducted) : 0,
+            machineRent: rentDeductedVal,
             isAdvance: isAdvance === 'true' || isAdvance === true,
             receiptUrl
         });
@@ -923,17 +942,25 @@ const createContractorPayment = async (req, res, next) => {
             // Explicit Advance: Just add to advance account
             contractor.advancePayment = currentAdvance + paidAmount;
         } else {
-            // Regular Payment: Subtract from pending, rest to advance
-            let newPending = currentPending - paidAmount;
+            // Regular Payment: Subtract (Cash + Rent + Adjustment) from pending, excess to advance
+            const reducePending = paidAmount + rentDeductedVal + advanceRecoveredVal;
+            let newPending = currentPending - reducePending;
+            
             if (newPending < 0) {
-                contractor.advancePayment = currentAdvance + Math.abs(newPending);
+                // If we paid/adjusted more than pending, only the CASH part that exceeds pending goes to advance
+                // But usually, excess is just treated as new advance
+                contractor.advancePayment = currentAdvance + Math.abs(newPending) - advanceRecoveredVal;
                 contractor.pendingAmount = 0;
             } else {
                 contractor.pendingAmount = newPending;
+                // If we used advance to recover, reduce it
+                if (advanceRecoveredVal > 0) {
+                    contractor.advancePayment = Math.max(0, currentAdvance - advanceRecoveredVal);
+                }
             }
         }
 
-        // Track cumulative amount paid
+        // Track cumulative cash paid
         contractor.totalPaid = (contractor.totalPaid || 0) + paidAmount;
 
         await contractor.save();

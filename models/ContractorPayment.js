@@ -34,6 +34,10 @@ const contractorPaymentSchema = new mongoose.Schema({
         type: Number,
         default: 0
     },
+    advanceRecovered: {
+        type: Number,
+        default: 0
+    },
     paymentMode: {
         type: String,
         enum: ['cash', 'online', 'upi', 'bank_transfer', 'bank', 'check', 'credit', 'other'],

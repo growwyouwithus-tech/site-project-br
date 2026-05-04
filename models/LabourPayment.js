@@ -30,6 +30,11 @@ const labourPaymentSchema = new mongoose.Schema({
         default: 0,
         min: 0
     },
+    advanceRecovered: {
+        type: Number,
+        default: 0,
+        min: 0
+    },
     finalAmount: {
         type: Number,
         required: true

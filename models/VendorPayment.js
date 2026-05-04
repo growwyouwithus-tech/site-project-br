@@ -19,6 +19,10 @@ const vendorPaymentSchema = new mongoose.Schema({
         type: Number,
         default: 0
     },
+    advanceRecovered: {
+        type: Number,
+        default: 0
+    },
     paymentMode: {
         type: String,
         enum: ['cash', 'upi', 'online', 'bank_transfer', 'bank', 'check', 'credit', 'other'],

@@ -1006,17 +1006,19 @@ const getMaterials = async (req, res, next) => {
 // Pay labour
 const payLabour = async (req, res, next) => {
     try {
-        const { labourId, amount, deduction, advance, paymentMode, remarks } = req.body;
+        const { labourId, amount, deduction, advance, advanceRecovered, paymentMode, remarks } = req.body;
+        const userId = req.user.userId;
         const amountVal = parseFloat(amount) || 0;
         const deductionVal = parseFloat(deduction) || 0;
         const advanceVal = parseFloat(advance) || 0;
+        const advanceRecoveredVal = parseFloat(advanceRecovered) || 0;
         
         // Money actually leaving the site manager's pocket/wallet
-        const finalAmount = Math.max(0, (amountVal - deductionVal) + advanceVal);
+        const finalAmount = amountVal + advanceVal;
 
-        // At least one of amount, deduction or advance must be provided
-        if (amountVal <= 0 && advanceVal <= 0 && deductionVal <= 0) {
-            return res.status(400).json({ success: false, error: 'Amount, Advance, or Deduction must be greater than 0' });
+        // At least one of amount, deduction, advance or advanceRecovered must be provided
+        if (amountVal <= 0 && advanceVal <= 0 && deductionVal <= 0 && advanceRecoveredVal <= 0) {
+            return res.status(400).json({ success: false, error: 'At least one field (Amount, Deduction, Advance, or Recovery) must be provided' });
         }
 
         const user = await User.findById(userId);
@@ -1048,6 +1050,7 @@ const payLabour = async (req, res, next) => {
             amount: amountVal,
             deduction: deductionVal,
             advance: advanceVal,
+            advanceRecovered: advanceRecoveredVal,
             finalAmount,
             paymentMode,
             remarks
@@ -1056,10 +1059,18 @@ const payLabour = async (req, res, next) => {
         await payment.save();
 
         // Update labour pending payout and advance balance
-        const reducePending = amountVal + deductionVal;
+        const reducePending = amountVal + deductionVal + advanceRecoveredVal;
         labour.pendingPayout -= reducePending;
         if (advanceVal > 0) labour.advance = (labour.advance || 0) + advanceVal;
-        if (deductionVal > 0) labour.advance = Math.max(0, (labour.advance || 0) - deductionVal);
+        if (deductionVal > 0 || advanceRecoveredVal > 0) {
+            const totalToReduceFromAdvance = advanceRecoveredVal; // Only advanceRecovered reduces advance balance
+            // Note: User said deduction should not be from advance? 
+            // "detuction ka matlab hai jab vo koi galti karega to hum uski salary me se payment kat sakte hai"
+            // So deduction reduces pending payout but NOT the advance balance.
+            if (totalToReduceFromAdvance > 0) {
+                labour.advance = Math.max(0, (labour.advance || 0) - totalToReduceFromAdvance);
+            }
+        }
         await labour.save();
 
         res.status(201).json({
@@ -1116,8 +1127,10 @@ const getPayments = async (req, res, next) => {
             amount: p.amount,
             deduction: p.deduction,
             advance: p.advance || 0,
+            advanceRecovered: p.advanceRecovered || 0,
             finalAmount: p.finalAmount,
             paymentMode: p.paymentMode,
+            remarks: p.remarks || '',
             createdAt: p.createdAt,
             labourId: p.labourId?._id || p.labourId,
             labourName: p.labourId?.name || 'Unknown Labour'
@@ -1981,7 +1994,7 @@ const getContractors = async (req, res, next) => {
 
 const payContractor = async (req, res, next) => {
     try {
-        const { contractorId, projectId, amount, paymentMode, remarks, advance, deduction } = req.body;
+        const { contractorId, projectId, amount, paymentMode, remarks, advance, deduction, advanceRecovered } = req.body;
         const userId = req.user.userId;
         const user = await User.findById(userId);
 
@@ -1994,13 +2007,14 @@ const payContractor = async (req, res, next) => {
         const amountVal = parseFloat(amount) || 0;
         const advanceVal = parseFloat(advance) || 0;
         const deductionVal = parseFloat(deduction) || 0;
+        const advanceRecoveredVal = parseFloat(advanceRecovered) || 0;
 
-        if (amountVal <= 0 && advanceVal <= 0 && deductionVal <= 0) {
-            return res.status(400).json({ success: false, error: 'Amount, Advance, or Deduction must be greater than 0' });
+        if (amountVal <= 0 && advanceVal <= 0 && deductionVal <= 0 && advanceRecoveredVal <= 0) {
+            return res.status(400).json({ success: false, error: 'Amount, Advance, Deduction, or Recovery must be greater than 0' });
         }
 
         // Total money leaving the site manager's wallet
-        const finalAmount = Math.max(0, (amountVal - deductionVal) + advanceVal);
+        const finalAmount = amountVal + advanceVal;
 
         if (finalAmount > 0) {
             if (user.walletBalance < finalAmount) {
@@ -2017,6 +2031,7 @@ const payContractor = async (req, res, next) => {
             amount: amountVal,
             advance: advanceVal,
             deduction: deductionVal,
+            advanceRecovered: advanceRecoveredVal,
             date: new Date(),
             paymentMode: paymentMode || 'cash',
             remark: remarks || '',
@@ -2024,11 +2039,11 @@ const payContractor = async (req, res, next) => {
         });
         await payment.save();
 
-        if (amountVal > 0 || deductionVal > 0 || advanceVal > 0) {
-            const reducePending = amountVal + deductionVal;
+        if (amountVal > 0 || deductionVal > 0 || advanceVal > 0 || advanceRecoveredVal > 0) {
+            const reducePending = amountVal + deductionVal + advanceRecoveredVal;
             contractor.pendingAmount = Math.max(0, (contractor.pendingAmount || 0) - reducePending);
             if (advanceVal > 0) contractor.advancePayment = (contractor.advancePayment || 0) + advanceVal;
-            if (deductionVal > 0) contractor.advancePayment = Math.max(0, (contractor.advancePayment || 0) - deductionVal);
+            if (advanceRecoveredVal > 0) contractor.advancePayment = Math.max(0, (contractor.advancePayment || 0) - advanceRecoveredVal);
             await contractor.save();
         }
         res.json({ success: true, message: 'Payment recorded', data: payment });
@@ -2039,7 +2054,7 @@ const payContractor = async (req, res, next) => {
 
 const payVendor = async (req, res, next) => {
     try {
-        const { vendorId, amount, paymentMode, remarks, advance, deduction } = req.body;
+        const { vendorId, amount, paymentMode, remarks, advance, deduction, advanceRecovered } = req.body;
         const userId = req.user.userId;
         const user = await User.findById(userId);
         const vendor = await Vendor.findById(vendorId);
@@ -2049,13 +2064,14 @@ const payVendor = async (req, res, next) => {
         const amountVal = parseFloat(amount) || 0;
         const advanceVal = parseFloat(advance) || 0;
         const deductionVal = parseFloat(deduction) || 0;
+        const advanceRecoveredVal = parseFloat(advanceRecovered) || 0;
 
-        if (amountVal <= 0 && advanceVal <= 0 && deductionVal <= 0) {
-            return res.status(400).json({ success: false, error: 'Amount, Advance, or Deduction must be greater than 0' });
+        if (amountVal <= 0 && advanceVal <= 0 && deductionVal <= 0 && advanceRecoveredVal <= 0) {
+            return res.status(400).json({ success: false, error: 'Amount, Advance, Deduction, or Recovery must be greater than 0' });
         }
 
         // Total money leaving the site manager's wallet
-        const finalAmount = Math.max(0, (amountVal - deductionVal) + advanceVal);
+        const finalAmount = amountVal + advanceVal;
 
         if (finalAmount > 0) {
             if (user.walletBalance < finalAmount) {
@@ -2065,11 +2081,11 @@ const payVendor = async (req, res, next) => {
             await user.save();
         }
 
-        if (amountVal > 0 || deductionVal > 0 || advanceVal > 0) {
-            const reducePending = amountVal + deductionVal;
+        if (amountVal > 0 || deductionVal > 0 || advanceVal > 0 || advanceRecoveredVal > 0) {
+            const reducePending = amountVal + deductionVal + advanceRecoveredVal;
             vendor.pendingAmount = Math.max(0, (vendor.pendingAmount || 0) - reducePending);
             if (advanceVal > 0) vendor.advancePayment = (vendor.advancePayment || 0) + advanceVal;
-            if (deductionVal > 0) vendor.advancePayment = Math.max(0, (vendor.advancePayment || 0) - deductionVal);
+            if (advanceRecoveredVal > 0) vendor.advancePayment = Math.max(0, (vendor.advancePayment || 0) - advanceRecoveredVal);
             await vendor.save();
         }
 
@@ -2078,6 +2094,7 @@ const payVendor = async (req, res, next) => {
             amount: amountVal,
             advance: advanceVal,
             deduction: deductionVal,
+            advanceRecovered: advanceRecoveredVal,
             date: new Date(),
             paymentMode: paymentMode || 'cash',
             remarks: remarks || '',
@@ -2240,6 +2257,7 @@ const getLabourDetails = async (req, res, next) => {
         const totalPaid = payments.reduce((sum, p) => sum + (p.amount || 0), 0);
         const totalAdvances = payments.reduce((sum, p) => sum + (p.advance || 0), 0);
         const totalDeductions = payments.reduce((sum, p) => sum + (p.deduction || 0), 0);
+        const totalAdvanceRecovered = payments.reduce((sum, p) => sum + (p.advanceRecovered || 0), 0);
 
         // 4. Separate advances from wage payments
         const wagePayments = payments.filter(p => (p.advance || 0) === 0);
@@ -2254,7 +2272,8 @@ const getLabourDetails = async (req, res, next) => {
                 attendance,
                 totalPaid,
                 totalAdvances,
-                totalDeductions
+                totalDeductions,
+                totalAdvanceRecovered
             }
         });
     } catch (error) {
