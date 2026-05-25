@@ -60,27 +60,33 @@ const markAttendance = async (req, res, next) => {
         const { projectId, date, photo, remarks } = req.body;
         const userId = req.user.userId;
 
-        // Check if attendance already marked for this date AND project (RESTRICTION REMOVED as per user request to allow multiple logs/managers)
-        /*
-        const existingAttendance = await Attendance.findOne({
-            userId,
-            date,
-            projectId
-        });
-
-        if (existingAttendance) {
+        if (!photo || (typeof photo === 'string' && !photo.trim())) {
             return res.status(400).json({
                 success: false,
-                error: 'Attendance already marked for this date at this site'
+                error: 'Selfie is required for attendance'
             });
         }
-        */
+
+        let photoUrl = photo.trim();
+        if (photoUrl.startsWith('data:image/')) {
+            const { cloudinary } = require('../config/cloudinary');
+            const result = await cloudinary.uploader.upload(photoUrl, {
+                folder: 'attendance',
+                resource_type: 'image',
+                transformation: [
+                    { width: 1200, height: 1200, crop: 'limit' },
+                    { quality: 'auto:good' },
+                    { fetch_format: 'auto' }
+                ]
+            });
+            photoUrl = result.secure_url;
+        }
 
         const attendance = new Attendance({
             userId,
             projectId,
             date,
-            photo,  // Photo is now optional
+            photo: photoUrl,
             remarks
         });
 

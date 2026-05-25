@@ -20,7 +20,8 @@ const attendanceSchema = new mongoose.Schema({
         default: Date.now
     },
     photo: {
-        type: String  // Optional photo URL
+        type: String,
+        required: [true, 'Selfie is required for attendance']
     },
     remarks: {
         type: String

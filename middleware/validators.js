@@ -95,6 +95,17 @@ const machineValidation = [
 // Attendance validation
 const attendanceValidation = [
   body('date').isISO8601().withMessage('Valid date is required'),
+  body('projectId').notEmpty().withMessage('Project is required'),
+  body('photo')
+    .notEmpty()
+    .withMessage('Selfie is required for attendance')
+    .custom((value) => {
+      if (typeof value !== 'string' || !value.trim()) return false;
+      if (value.startsWith('data:image/')) return true;
+      if (value.startsWith('http://') || value.startsWith('https://')) return true;
+      return false;
+    })
+    .withMessage('A valid selfie photo is required'),
   validate
 ];
 
