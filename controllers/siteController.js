@@ -400,6 +400,14 @@ const addStockIn = async (req, res, next) => {
             photoUrls = [photoUrl];
         }
 
+        // Require at least one photo for stock entry
+        if (!photoUrl && (!photoUrls || photoUrls.length === 0)) {
+            return res.status(400).json({
+                success: false,
+                error: 'Please upload at least one image for stock entry'
+            });
+        }
+
         const newStock = new Stock({
             projectId,
             vendorId,
@@ -650,13 +658,56 @@ const getStockOuts = async (req, res, next) => {
 
 
 // ============ GALLERY ============
+const { Gallery } = require('../models');
+const { cloudinary } = require('../config/cloudinary');
 
 const uploadGalleryImages = async (req, res, next) => {
-    res.json({ success: true, message: 'Feature coming soon' });
+    try {
+        const { projectId, images } = req.body;
+        
+        if (!projectId) {
+            return res.status(400).json({ success: false, error: 'Project ID is required' });
+        }
+
+        if (!images || !Array.isArray(images) || images.length === 0) {
+             return res.status(400).json({ success: false, error: 'No images provided' });
+        }
+
+        const photos = [];
+        for (const base64Str of images) {
+            const result = await cloudinary.uploader.upload(base64Str, {
+                folder: 'gallery',
+                resource_type: 'auto',
+                transformation: [
+                    { width: 1200, height: 1200, crop: 'limit' },
+                    { quality: 'auto:good' },
+                    { fetch_format: 'auto' }
+                ]
+            });
+            photos.push(result.secure_url);
+        }
+
+        const galleryItem = await Gallery.create({
+            projectId,
+            photos,
+            uploadedBy: req.user.userId
+        });
+
+        res.json({ success: true, data: galleryItem, message: 'Images uploaded successfully' });
+    } catch (error) {
+        console.error('❌ Error uploading gallery images:', error);
+        next(error);
+    }
 };
 
 const getGalleryImages = async (req, res, next) => {
-    res.json({ success: true, data: [] });
+    try {
+        const gallery = await Gallery.find().populate('projectId', 'name').sort({ createdAt: -1 });
+        res.json({ success: true, data: gallery });
+    } catch (error) {
+        console.error('❌ Error fetching gallery images:', error);
+        next(error);
+    }
 };
 
 // ============ EXPENSES ============
@@ -1218,7 +1269,7 @@ const getProfile = async (req, res, next) => {
 
 const getVendors = async (req, res, next) => {
     try {
-        const vendors = await Vendor.find().select('name contact');
+        const vendors = await Vendor.find().select('name contact pendingAmount advancePayment');
         res.json({
             success: true,
             data: vendors

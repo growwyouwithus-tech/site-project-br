@@ -28,5 +28,6 @@ module.exports = {
     Attendance: require('./Attendance'),
     ItemName: require('./ItemName'),
     Notification: require('./Notification'),
-    Todo: require('./Todo')
+    Todo: require('./Todo'),
+    Gallery: require('./Gallery')
 };

@@ -28,6 +28,11 @@ const machineSchema = new mongoose.Schema({
         enum: ['available', 'in-use', 'maintenance', 'returned'],
         default: 'available'
     },
+    availableLocation: {
+        type: String,
+        trim: true,
+        default: ''
+    },
     ownershipType: {
         type: String,
         enum: ['own', 'rented'],
@@ -107,6 +112,10 @@ const machineSchema = new mongoose.Schema({
         assignedModel: {
             type: String,
             enum: ['Project', 'Contractor']
+        },
+        projectId: {
+            type: mongoose.Schema.Types.ObjectId,
+            ref: 'Project'
         },
         assignedAt: Date,
         returnedAt: Date,

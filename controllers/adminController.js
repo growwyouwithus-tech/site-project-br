@@ -240,6 +240,28 @@ const updateProject = async (req, res, next) => {
             }
         }
 
+        // If project marked completed now, move it from contractors' assignedProjects to their projectHistory
+        if (updates.status === 'completed' && oldProject.status !== 'completed') {
+            try {
+                const projectObjectId = new mongoose.Types.ObjectId(id);
+                const contractors = await Contractor.find({ assignedProjects: projectObjectId });
+                console.log(`Found ${contractors.length} contractors for project ${id}`);
+
+                for (const c of contractors) {
+                    console.log(`Processing contractor: ${c.name}, assignedProjects before: ${c.assignedProjects.length}`);
+
+                    c.projectHistory = c.projectHistory || [];
+                    c.projectHistory.push({ projectId: project._id, name: project.name, completedAt: new Date() });
+                    c.assignedProjects = (c.assignedProjects || []).filter(pid => !pid.equals(projectObjectId));
+
+                    await c.save();
+                    console.log(`✅ Updated contractor ${c.name}, projectHistory now has ${c.projectHistory.length} entries`);
+                }
+            } catch (err) {
+                console.error('Error updating contractor project history:', err);
+            }
+        }
+
         res.json({
             success: true,
             message: 'Project updated successfully',
@@ -530,10 +552,20 @@ const recordVendorPayment = async (req, res, next) => {
             });
         }
 
+        if (!req.file) {
+            return res.status(400).json({
+                success: false,
+                error: 'Please upload payment slip / receipt image'
+            });
+        }
+
+        const { uploadToCloudinary } = require('../config/cloudinary');
+        const receiptUrl = await uploadToCloudinary(req.file.buffer, 'payments');
+
         const paidAmount = parseFloat(amount || 0);
         const deductionAmount = parseFloat(req.body.deduction || 0);
         const advanceRecoveredAmount = parseFloat(req.body.advanceRecovered || 0);
-        
+
         const currentPending = vendor.pendingAmount || 0;
         const currentAdvance = vendor.advancePayment || 0;
 
@@ -567,7 +599,7 @@ const recordVendorPayment = async (req, res, next) => {
             remarks,
             recordedBy: req.user._id,
             isAdvance: req.body.isAdvance === 'true' || req.body.isAdvance === true,
-            receiptUrl: req.body.receiptUrl
+            receiptUrl
         });
 
         await vendor.save();
@@ -911,13 +943,89 @@ const createContractor = async (req, res, next) => {
 const updateContractor = async (req, res, next) => {
     try {
         const { id } = req.params;
-        const contractor = await Contractor.findByIdAndUpdate(id, req.body, { new: true });
+        const contractor = await Contractor.findById(id);
         if (!contractor) {
             return res.status(404).json({
                 success: false,
                 error: 'Contractor not found'
             });
         }
+
+        const isCompleting = req.body.status === 'complete' && contractor.status !== 'complete';
+        const isAssigningNewProject = req.body.isAssigningNewProject === true;
+
+        if (isCompleting && !isAssigningNewProject) {
+            // We just let it mark as complete, no archiving yet.
+            // Wait, previously we archived on complete. 
+            // If we archive on complete, we lose the active view on the table until they assign a new project?
+            // The user wants: "jese hi project complite status karu edit button desable ho jaye...".
+            // So if they complete, it stays on the table AS complete. 
+            // The financials shouldn't reset until they assign a NEW project!
+            // So we DO NOT push to history here. We push to history when they assign a NEW project!
+        }
+
+        if (isAssigningNewProject) {
+            const projectIds = contractor.assignedProjects || [];
+            const oldProjId = projectIds.length > 0 ? projectIds[0] : null;
+            let projName = 'Unassigned Contract';
+
+            if (oldProjId) {
+                const proj = await Project.findById(oldProjId);
+                if (proj) projName = proj.name;
+            }
+
+            contractor.projectHistory.push({
+                projectId: oldProjId,
+                name: projName,
+                assignedAt: contractor.projectAssignedAt,
+                completedAt: new Date(),
+                distanceValue: contractor.distanceValue,
+                distanceUnit: contractor.distanceUnit,
+                expensePerUnit: contractor.expensePerUnit,
+                totalPaid: contractor.totalPaid,
+                advancePayment: contractor.advancePayment,
+                totalMachineRent: req.body.currentTotalMachineRent || 0
+            });
+
+            // Stamp missing projectId on past machine assignments (so old rent stays on old project)
+            if (oldProjId) {
+                const contractorMachines = await Machine.find({
+                    'assignmentHistory.assignedTo': contractor._id,
+                    'assignmentHistory.assignedModel': 'Contractor'
+                });
+                for (const machine of contractorMachines) {
+                    let dirty = false;
+                    (machine.assignmentHistory || []).forEach((entry) => {
+                        if (
+                            entry.assignedModel === 'Contractor' &&
+                            entry.assignedTo?.toString() === contractor._id.toString() &&
+                            !entry.projectId
+                        ) {
+                            entry.projectId = oldProjId;
+                            dirty = true;
+                        }
+                    });
+                    if (dirty) await machine.save();
+                }
+            }
+
+            // Reset root financials for new project
+            contractor.totalPaid = 0;
+            contractor.advancePayment = 0;
+            contractor.pendingAmount = 0;
+            contractor.projectAssignedAt = new Date();
+
+            // The new assignedProjects, distanceValue, etc. will be set via Object.assign below
+        }
+
+        Object.assign(contractor, req.body);
+        if (req.body.assignedProjectId) {
+            contractor.assignedProjects = [req.body.assignedProjectId];
+        }
+        await contractor.save();
+
+        await contractor.populate('assignedProjects', 'name');
+
         res.json({
             success: true,
             message: 'Contractor updated successfully',
@@ -970,15 +1078,29 @@ const createContractorPayment = async (req, res, next) => {
             return res.status(404).json({ success: false, error: 'Contractor not found' });
         }
 
+        if (!req.file) {
+            return res.status(400).json({
+                success: false,
+                error: 'Please upload payment slip / receipt image'
+            });
+        }
+
+        const { uploadToCloudinary } = require('../config/cloudinary');
+        const receiptUrl = await uploadToCloudinary(req.file.buffer, 'payments');
+
         const paidAmount = parseFloat(amount) || 0;
         const rentDeductedVal = parseFloat(rentDeducted) || 0;
         const advanceRecoveredVal = parseFloat(advanceRecovered) || 0;
-        const receiptUrl = req.file ? `/uploads/${req.file.filename}` : undefined;
 
         // Create Payment Record
         const payment = new ContractorPayment({
             contractorId,
             contractorName: contractor.name,
+            projectId: (req.body.projectId && String(req.body.projectId).trim() !== '')
+                ? req.body.projectId
+                : (contractor.assignedProjects && contractor.assignedProjects.length > 0
+                    ? contractor.assignedProjects[0]
+                    : undefined),
             amount: paidAmount,
             date: date || Date.now(),
             remark: remarks, // using remarks from body
@@ -1009,7 +1131,7 @@ const createContractorPayment = async (req, res, next) => {
             // Regular Payment: Subtract (Cash + Rent + Adjustment) from pending, excess to advance
             const reducePending = paidAmount + rentDeductedVal + advanceRecoveredVal;
             let newPending = currentPending - reducePending;
-            
+
             if (newPending < 0) {
                 // If we paid/adjusted more than pending, only the CASH part that exceeds pending goes to advance
                 // But usually, excess is just treated as new advance
@@ -1098,18 +1220,32 @@ const getMachines = async (req, res, next) => {
 
 const createMachine = async (req, res, next) => {
     try {
-        // Upload photo to Cloudinary if file exists
-        let machinePhotoUrl = null;
-        if (req.file) {
-            const { uploadToCloudinary } = require('../config/cloudinary');
-            machinePhotoUrl = await uploadToCloudinary(req.file.buffer, 'machines');
+        if (!req.file) {
+            return res.status(400).json({
+                success: false,
+                error: 'Please upload a photo for the machine'
+            });
         }
 
+        // Upload photo to Cloudinary
+        let machinePhotoUrl = null;
+        const { uploadToCloudinary } = require('../config/cloudinary');
+        machinePhotoUrl = await uploadToCloudinary(req.file.buffer, 'machines');
+
+        const initialStatus = req.body.status || 'available';
+        const availableLocation = (req.body.availableLocation || '').trim();
+        if (initialStatus === 'available' && req.body.category !== 'consumables' && !availableLocation) {
+            return res.status(400).json({
+                success: false,
+                error: 'Please enter where the machine is available'
+            });
+        }
         const machineData = {
             ...req.body,
-            machinePhoto: machinePhotoUrl || req.body.machinePhoto,
+            machinePhoto: machinePhotoUrl,
             // Convert empty string to null for optional ObjectId fields
-            projectId: req.body.projectId && req.body.projectId.trim() !== '' ? req.body.projectId : null
+            projectId: req.body.projectId && req.body.projectId.trim() !== '' ? req.body.projectId : null,
+            availableLocation: initialStatus === 'available' ? availableLocation : ''
         };
 
         const machine = new Machine(machineData);
@@ -1133,6 +1269,13 @@ const updateMachine = async (req, res, next) => {
         const machine = await Machine.findById(id);
         if (!machine) {
             return res.status(404).json({ success: false, error: 'Machine not found' });
+        }
+
+        if (machine.status === 'returned') {
+            return res.status(400).json({
+                success: false,
+                error: 'Returned machines cannot be assigned or edited'
+            });
         }
 
         // Handle Photo Upload
@@ -1184,7 +1327,8 @@ const updateMachine = async (req, res, next) => {
 
         // Detect assignment transition (available -> in-use)
         const isNowInUse = updates.status === 'in-use' && machine.status !== 'in-use';
-        
+        const prevStatus = machine.status;
+
         // Normal updates
         Object.keys(updates).forEach(key => {
             if (key !== 'maintenanceCost' && key !== 'maintenanceDescription') {
@@ -1192,13 +1336,36 @@ const updateMachine = async (req, res, next) => {
             }
         });
 
+        const nextStatus = machine.status;
+        const becomingAvailable = nextStatus === 'available' && prevStatus !== 'available';
+        if (nextStatus !== 'available') {
+            machine.availableLocation = '';
+        } else {
+            const loc = (updates.availableLocation ?? req.body.availableLocation ?? machine.availableLocation ?? '').trim();
+            if (!loc && becomingAvailable) {
+                return res.status(400).json({
+                    success: false,
+                    error: 'Please enter where the machine is available'
+                });
+            }
+            if (loc) machine.availableLocation = loc;
+        }
+
         // If newly assigned, record history
         if (isNowInUse) {
             if (!machine.assignmentHistory) machine.assignmentHistory = [];
-            
+
+            let histProjectId = machine.projectId;
+            if (!histProjectId && machine.assignedToContractor) {
+                const contractorObj = await Contractor.findById(machine.assignedToContractor);
+                if (contractorObj && contractorObj.assignedProjects && contractorObj.assignedProjects.length > 0) {
+                    histProjectId = contractorObj.assignedProjects[0];
+                }
+            }
+
             machine.assignmentHistory.push({
                 assignedAt: machine.assignedAt || new Date(),
-                projectId: machine.projectId,
+                projectId: histProjectId,
                 assignedTo: machine.assignedToContractor || machine.projectId,
                 assignedModel: machine.assignedToContractor ? 'Contractor' : 'Project',
                 rate: machine.assignedRentalPerDay || machine.perDayExpense || 0,
@@ -1337,7 +1504,20 @@ const returnRentedMachine = async (req, res, next) => {
         const targetProjectId = machine.projectId;
 
         // Update machine status and clear assignments
-        machine.status = machine.ownershipType === 'rented' ? 'returned' : 'available';
+        const willBeAvailable = machine.ownershipType !== 'rented';
+        machine.status = willBeAvailable ? 'available' : 'returned';
+        if (willBeAvailable) {
+            const returnLocation = (req.body.availableLocation || '').trim();
+            if (!returnLocation) {
+                return res.status(400).json({
+                    success: false,
+                    error: 'Please enter where the machine is available'
+                });
+            }
+            machine.availableLocation = returnLocation;
+        } else {
+            machine.availableLocation = '';
+        }
         machine.returnedAt = returnDate;
         machine.totalRentPaid = totalRent;
         machine.projectId = null;
@@ -1357,25 +1537,44 @@ const returnRentedMachine = async (req, res, next) => {
             machine.assignmentHistory[lastIdx].durationMinutes = machine.rentalType === 'perHour' ? diffValue : diffValue * 24 * 60;
         }
 
-        await machine.save();
+        const isIncome = machine.ownershipType === 'own' && contractorId;
+        const isExpense = machine.ownershipType === 'rented';
 
-        // Create expense entry for rental
-        const expense = new Expense({
-            projectId: targetProjectId,
-            name: `Rental return: ${machine.name}${machine.plateNumber ? ' [' + machine.plateNumber + ']' : ''}`,
-            amount: totalRent,
-            category: 'machine_rental',
-            remarks: `${diffDisplay} @ ₹${rate}/${machine.rentalType === 'perHour' ? 'hr' : 'day'}. Assigned: ${assignedDate.toLocaleDateString()} ${assignedDate.toLocaleTimeString()}, Returned: ${returnDate.toLocaleDateString()} ${returnDate.toLocaleTimeString()}`,
-            addedBy: req.user.userId
-        });
-        await expense.save();
+        let expense = null;
+        let transaction = null;
 
-        // Update project expenses if projectId exists
-        if (targetProjectId) {
-            await Project.findByIdAndUpdate(
-                targetProjectId,
-                { $inc: { expenses: totalRent } }
-            );
+        if (isExpense) {
+            // Create expense entry for rental
+            expense = new Expense({
+                projectId: targetProjectId,
+                name: `Rental return: ${machine.name}${machine.plateNumber ? ' [' + machine.plateNumber + ']' : ''}`,
+                amount: totalRent,
+                category: 'machine_rental',
+                remarks: `${diffDisplay} @ ₹${rate}/${machine.rentalType === 'perHour' ? 'hr' : 'day'}. Assigned: ${assignedDate.toLocaleDateString()} ${assignedDate.toLocaleTimeString()}, Returned: ${returnDate.toLocaleDateString()} ${returnDate.toLocaleTimeString()}`,
+                addedBy: req.user.userId
+            });
+            await expense.save();
+
+            // Update project expenses if projectId exists
+            if (targetProjectId) {
+                await Project.findByIdAndUpdate(
+                    targetProjectId,
+                    { $inc: { expenses: totalRent } }
+                );
+            }
+        } else if (isIncome) {
+            // It's income (Capital). Create a Transaction to record the capital generated.
+            const Transaction = require('../models/Transaction');
+            transaction = new Transaction({
+                amount: totalRent,
+                type: 'credit',
+                category: 'capital',
+                description: `Machine Rent Income: ${machine.name} [${machine.plateNumber || ''}] from Contractor`,
+                paymentMode: 'cash',
+                date: returnDate,
+                addedBy: req.user.userId
+            });
+            await transaction.save();
         }
 
         // Update contractor's pending amount if assigned
@@ -1388,12 +1587,16 @@ const returnRentedMachine = async (req, res, next) => {
             );
         }
 
+        // Save machine at the end so if transaction fails, machine is not marked returned
+        await machine.save();
+
         res.json({
             success: true,
-            message: 'Machine returned and expense recorded successfully',
+            message: 'Machine returned and record processed successfully',
             data: {
                 machine,
                 expense,
+                transaction,
                 rentalDetails: {
                     duration: diffDisplay,
                     rate,
@@ -1466,6 +1669,14 @@ const createStock = async (req, res, next) => {
         // Use first photo as main photo if not set
         if (!photoUrl && photosUrls.length > 0) {
             photoUrl = photosUrls[0];
+        }
+
+        // Require at least one photo for stock entry
+        if (!photoUrl && (!photosUrls || photosUrls.length === 0)) {
+            return res.status(400).json({
+                success: false,
+                error: 'Please upload at least one image for stock entry'
+            });
         }
 
         const newStock = new Stock({
@@ -1636,18 +1847,16 @@ const createTransfer = async (req, res, next) => {
             // PROCEED with machineId for now.
         } else if (type === 'stock' || type === 'consumable-goods') {
             if (!itemId) return res.status(400).json({ success: false, error: 'Item is required' });
-            transferData.materialName = itemId; // For stock/consumables, we might store Name or ID. 
-            // If Stock transfer passes "materialName" as ID? No, frontend passes ID or Name?
-            // Frontend: value={s.materialName} for Stock (Transfer.jsx line 324 in overwritten file)
-            // Frontend: value={cg._id} for Consumable (Transfer.jsx line 348)
+            transferData.materialName = itemId; // Fallback
 
             if (type === 'consumable-goods') {
-                // For Consumables, we passed ID. 
-                // We should probably store reference ID if Transfer supports it.
-                // If Transfer model only has materialName (String), we store name.
-                // Let's look up name if ID passed.
                 const item = await ConsumableGoods.findById(itemId);
                 if (item) transferData.materialName = item.name;
+            } else if (type === 'stock') {
+                const sourceStock = await Stock.findById(itemId);
+                if (sourceStock) {
+                    transferData.materialName = sourceStock.materialName;
+                }
             }
         }
 
@@ -1675,18 +1884,7 @@ const createTransfer = async (req, res, next) => {
             });
         } else if (type === 'stock') {
             // Logic to move stock
-            // itemId is materialName for Stock (as per frontend)
-            // Wait, logic in Step 398 used Stock.findById(itemId).
-            // My rewrote Transfer.jsx uses: value={s.materialName} for stock.
-            // THIS IS A MISMATCH. Backend expects ID to deduct? 
-            // Or verify Stock logic. 
-            // Step 398 Logic: const sourceStock = await Stock.findById(itemId);
-            // If frontend sends Name, this fails.
-            // I should check strictness. 
-            // Let's assume frontend sends Name for stock (from my rewrite).
-            // Then finding source stock needs (projectId + materialName).
-
-            const sourceStock = await Stock.findOne({ projectId: fromProject, materialName: itemId });
+            const sourceStock = await Stock.findById(itemId);
 
             if (sourceStock) {
                 sourceStock.quantity = Math.max(0, sourceStock.quantity - (parseFloat(quantity) || 0));
@@ -2202,13 +2400,55 @@ const generateReport = async (req, res, next) => {
         }
 
         switch (type) {
-            case 'expenses':
-                data = await Expense.find(filter)
-                    .populate('projectId', 'name')
-                    .populate('addedBy', 'name')
-                    .lean();
-                // Map to flatten for table display if needed, but better to handle on frontend
+            case 'expenses': {
+                const VendorPayment = require('../models/VendorPayment');
+                const ContractorPayment = require('../models/ContractorPayment');
+                const LabourPayment = require('../models/LabourPayment');
+
+                const [genExps, venExps, conExps, labExps] = await Promise.all([
+                    Expense.find(filter).populate('projectId', 'name').populate('addedBy', 'name').lean(),
+                    VendorPayment.find(filter).populate('vendorId', 'name').populate('recordedBy', 'name').lean(),
+                    ContractorPayment.find(filter).populate('contractorId', 'name').populate('paidBy', 'name').lean(),
+                    LabourPayment.find(filter).populate('labourId', 'name').populate('userId', 'name').lean()
+                ]);
+
+                const allExpenses = [
+                    ...genExps.map(e => ({ ...e, reportType: 'General Expense' })),
+                    ...venExps.map(v => ({
+                        ...v,
+                        projectId: v.projectId || null,
+                        amount: v.amount,
+                        name: `Vendor Payment: ${v.vendorId?.name || 'Unknown'}`,
+                        category: 'vendor_payment',
+                        addedBy: v.recordedBy,
+                        reportType: 'Vendor Payment',
+                        createdAt: v.date || v.createdAt
+                    })),
+                    ...conExps.map(c => ({
+                        ...c,
+                        projectId: c.projectId || null,
+                        amount: c.amount,
+                        name: `Contractor Payment: ${c.contractorName || c.contractorId?.name || 'Unknown'}`,
+                        category: 'contractor_payment',
+                        addedBy: c.paidBy,
+                        reportType: 'Contractor Payment',
+                        createdAt: c.date || c.createdAt
+                    })),
+                    ...labExps.map(l => ({
+                        ...l,
+                        projectId: l.projectId || null,
+                        amount: l.amount,
+                        name: `Labour Payment: ${l.labourId?.name || 'Unknown'}`,
+                        category: 'labour_payment',
+                        addedBy: l.userId,
+                        reportType: 'Labour Payment',
+                        createdAt: l.date || l.createdAt
+                    }))
+                ];
+                allExpenses.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+                data = allExpenses;
                 break;
+            }
 
             case 'attendance':
                 // For attendance report, we want the actual logs
@@ -2228,7 +2468,7 @@ const generateReport = async (req, res, next) => {
                 break;
 
             case 'machines':
-                data = await Machine.find(filter)
+                data = await Machine.find({ ...filter, category: 'big' })
                     .populate('projectId', 'name')
                     .populate('assignedToContractor', 'name')
                     .select('name model plateNumber category quantity status ownershipType vendorName perDayExpense assignedRentalPerDay rentalType projectId assignedToContractor createdAt')
@@ -2239,43 +2479,95 @@ const generateReport = async (req, res, next) => {
                 data = await Contractor.find(filter).lean();
                 break;
 
-            case 'pl':
-                const [allExps, allProjs] = await Promise.all([
+            case 'pl': {
+                const VendorPayment = require('../models/VendorPayment');
+                const ContractorPayment = require('../models/ContractorPayment');
+                const LabourPayment = require('../models/LabourPayment');
+                const Transaction = require('../models/Transaction');
+
+                const [allGenExps, allVenExps, allConExps, allLabExps, allProjs, capitalIncomes] = await Promise.all([
                     Expense.find(filter).lean(),
-                    Project.find().lean()
+                    VendorPayment.find(filter).lean(),
+                    ContractorPayment.find(filter).lean(),
+                    LabourPayment.find(filter).lean(),
+                    Project.find().lean(),
+                    Transaction.find({ ...filter, type: 'credit', category: 'capital' }).lean()
                 ]);
-                const totalExpenses = allExps.reduce((sum, exp) => sum + (exp.amount || 0), 0);
+
+                const totalGen = allGenExps.reduce((sum, exp) => sum + (exp.amount || 0), 0);
+                const totalVen = allVenExps.reduce((sum, v) => sum + (v.amount || 0), 0);
+                const totalCon = allConExps.reduce((sum, c) => sum + (c.amount || 0), 0);
+                const totalLab = allLabExps.reduce((sum, l) => sum + (l.amount || 0), 0);
+                const totalExpenses = totalGen + totalVen + totalCon + totalLab;
+
                 const totalBudget = allProjs.reduce((sum, proj) => sum + (proj.budget || 0), 0);
-                const profit = totalBudget - totalExpenses;
+                const totalCapitalIncome = capitalIncomes.reduce((sum, t) => sum + (t.amount || 0), 0);
+
+                const totalRevenue = totalBudget + totalCapitalIncome;
+                const profit = totalRevenue - totalExpenses;
 
                 data = [
                     { type: 'Revenue', amount: totalBudget, description: 'Total Project Budget' },
-                    { type: 'Expenses', amount: totalExpenses, description: 'Total Expenses' },
+                    { type: 'Revenue', amount: totalCapitalIncome, description: 'Other Capital/Income (e.g. Machine Rent)' },
+                    { type: 'Expenses', amount: totalExpenses, description: 'Total Expenses (All Types)' },
                     { type: 'Profit', amount: profit, description: 'Net Profit/Loss' }
                 ];
                 break;
+            }
 
             case 'full':
-            default:
-                const [fullExps, fullProjs, fullUsers, fullStocks, fullMachines, fullContractors] = await Promise.all([
+            default: {
+                const VendorPayment = require('../models/VendorPayment');
+                const ContractorPayment = require('../models/ContractorPayment');
+                const LabourPayment = require('../models/LabourPayment');
+
+                const [fullGenExps, fullVenExps, fullConExps, fullLabExps, fullProjs, fullUsers, fullStocks, fullMachines, fullContractors] = await Promise.all([
                     Expense.find(filter).populate('projectId', 'name').populate('addedBy', 'name').lean(),
+                    VendorPayment.find(filter).populate('vendorId', 'name').populate('recordedBy', 'name').lean(),
+                    ContractorPayment.find(filter).populate('contractorId', 'name').populate('paidBy', 'name').lean(),
+                    LabourPayment.find(filter).populate('labourId', 'name').populate('userId', 'name').lean(),
                     Project.find().lean(),
                     User.find().select('name email role').lean(),
                     Stock.find(filter).populate('projectId', 'name').populate('vendorId', 'name').lean(),
-                    Machine.find(filter).populate('projectId', 'name').populate('assignedToContractor', 'name').lean(),
+                    Machine.find({ ...filter, category: 'big' }).populate('projectId', 'name').populate('assignedToContractor', 'name').lean(),
                     Contractor.find().lean()
                 ]);
+
+                const fullAllExpenses = [
+                    ...fullGenExps.map(e => ({ ...e, reportType: 'General Expense' })),
+                    ...fullVenExps.map(v => ({
+                        ...v,
+                        amount: v.amount,
+                        name: `Vendor Payment: ${v.vendorId?.name || 'Unknown'}`,
+                        category: 'vendor_payment',
+                        reportType: 'Vendor Payment'
+                    })),
+                    ...fullConExps.map(c => ({
+                        ...c,
+                        amount: c.amount,
+                        name: `Contractor Payment: ${c.contractorName || c.contractorId?.name || 'Unknown'}`,
+                        category: 'contractor_payment',
+                        reportType: 'Contractor Payment'
+                    })),
+                    ...fullLabExps.map(l => ({
+                        ...l,
+                        amount: l.amount,
+                        name: `Labour Payment: ${l.labourId?.name || 'Unknown'}`,
+                        category: 'labour_payment',
+                        reportType: 'Labour Payment'
+                    }))
+                ];
 
                 data = {
                     summary: {
                         totalProjects: fullProjs.length,
-                        totalExpenses: fullExps.reduce((sum, exp) => sum + (exp.amount || 0), 0),
+                        totalExpenses: fullAllExpenses.reduce((sum, exp) => sum + (exp.amount || 0), 0),
                         totalUsers: fullUsers.length,
                         totalStocks: fullStocks.length,
                         totalMachines: fullMachines.length,
                         totalContractors: fullContractors.length
                     },
-                    expenses: fullExps,
+                    expenses: fullAllExpenses,
                     projects: fullProjs,
                     users: fullUsers,
                     stocks: fullStocks,
@@ -2283,6 +2575,7 @@ const generateReport = async (req, res, next) => {
                     contractors: fullContractors
                 };
                 break;
+            }
         }
 
         res.json({
@@ -2688,66 +2981,173 @@ const getBankDetailWithTransactions = async (req, res, next) => {
         // 4. Contractor Payments
         // 5. Labour Payments
 
-        const [manualTransactions, expenses, vendorPayments, contractorPayments, labourPayments] = await Promise.all([
-            Transaction.find({ bankId: id }).populate('addedBy', 'name role').lean(),
-            Expense.find({ bankId: id }).lean(),
-            VendorPayment.find({ bankId: id }).lean(),
-            ContractorPayment.find({ bankId: id }).lean(),
-            LabourPayment.find({ bankId: id }).lean()
+        const [manualTransactions, expenses, vendorPayments, contractorPayments, labourPayments, allBanks] = await Promise.all([
+            Transaction.find({ bankId: id })
+                .populate('addedBy', 'name role')
+                .populate('creditorId', 'name')
+                .populate('projectId', 'name')
+                .lean(),
+            Expense.find({ bankId: id })
+                .populate('projectId', 'name')
+                .populate('creditorId', 'name')
+                .populate('addedBy', 'name role')
+                .lean(),
+            VendorPayment.find({ bankId: id })
+                .populate('vendorId', 'name')
+                .populate('creditorId', 'name')
+                .populate('recordedBy', 'name role')
+                .lean(),
+            ContractorPayment.find({ bankId: id })
+                .populate('contractorId', 'name')
+                .populate('projectId', 'name')
+                .populate('creditorId', 'name')
+                .populate('paidBy', 'name role')
+                .lean(),
+            LabourPayment.find({ bankId: id })
+                .populate('labourId', 'name')
+                .populate('creditorId', 'name')
+                .populate('userId', 'name role')
+                .lean(),
+            BankDetail.find().lean()
         ]);
+
+        const bankDisplayName = `${bank.bankName}${bank.holderName ? ` (${bank.holderName})` : ''}`;
+        const bankPartyType = 'Bank Account';
+
+        const applyFromTo = (txn, counterpartyName, counterpartyType) => {
+            const hasCounterparty = counterpartyName && counterpartyName !== '-';
+            if (txn.type === 'credit') {
+                return {
+                    ...txn,
+                    fromName: hasCounterparty ? counterpartyName : '-',
+                    fromType: hasCounterparty ? counterpartyType : '',
+                    toName: bankDisplayName,
+                    toType: bankPartyType
+                };
+            }
+            return {
+                ...txn,
+                fromName: bankDisplayName,
+                fromType: bankPartyType,
+                toName: hasCounterparty ? counterpartyName : '-',
+                toType: hasCounterparty ? counterpartyType : ''
+            };
+        };
 
         // Normalize data
         const allTransactions = [
-            ...manualTransactions.map(t => ({
-                ...t,
-                source: 'Manual Transaction',
-                amount: t.amount,
-                type: t.type
-            })),
-            ...expenses.map(e => ({
-                _id: e._id,
-                date: e.createdAt,
-                description: `Expense: ${e.name} (${e.category})`,
-                amount: e.amount,
-                type: 'debit',
-                category: 'expense',
-                source: 'Expense',
-                paymentMode: e.paymentMode,
-                bankId: e.bankId
-            })),
-            ...vendorPayments.map(v => ({
-                _id: v._id,
-                date: v.date,
-                description: `Vendor Payment`, // Can fetch vendor name if populated, but keeping simple for now
-                amount: v.amount,
-                type: 'debit',
-                category: 'expense',
-                source: 'Vendor Payment',
-                paymentMode: v.paymentMode,
-                bankId: v.bankId
-            })),
-            ...contractorPayments.map(c => ({
-                _id: c._id,
-                date: c.date,
-                description: `Contractor Payment: ${c.contractorName}`,
-                amount: c.amount,
-                type: 'debit',
-                category: 'expense',
-                source: 'Contractor Payment',
-                paymentMode: c.paymentMode,
-                bankId: c.bankId
-            })),
-            ...labourPayments.map(l => ({
-                _id: l._id,
-                date: l.createdAt, // LabourPayment schema has timestamps
-                description: `Labour Payment`,
-                amount: l.finalAmount,
-                type: 'debit',
-                category: 'expense',
-                source: 'Labour Payment',
-                paymentMode: l.paymentMode,
-                bankId: l.bankId
-            }))
+            ...manualTransactions.map(t => {
+                let partyName = '-';
+                let partyType = '';
+                if (t.creditorId) {
+                    partyName = t.creditorId.name;
+                    partyType = 'Creditor';
+                } else if (t.projectId) {
+                    partyName = t.projectId.name;
+                    partyType = 'Project';
+                } else if (t.category === 'capital') {
+                    partyName = 'Owner (Capital)';
+                    partyType = 'Owner';
+                } else if (t.description && t.description.includes('Wallet allocation to ')) {
+                    partyName = t.description.replace('Wallet allocation to ', '').split(' - ')[0].trim();
+                    partyType = 'Site Manager';
+                } else if (t.description && t.description.startsWith('Transfer to ')) {
+                    const rawBank = t.description.replace('Transfer to ', '').split(' - ')[0].trim();
+                    const bankName = rawBank.split(' (')[0].trim();
+                    const matchingBank = allBanks.find(b => b.bankName.toLowerCase() === bankName.toLowerCase());
+                    partyName = matchingBank ? `${matchingBank.bankName} (${matchingBank.holderName})` : rawBank;
+                    partyType = 'Bank Account';
+                } else if (t.description && t.description.startsWith('Transfer from ')) {
+                    const rawBank = t.description.replace('Transfer from ', '').split(' - ')[0].trim();
+                    const bankName = rawBank.split(' (')[0].trim();
+                    const matchingBank = allBanks.find(b => b.bankName.toLowerCase() === bankName.toLowerCase());
+                    partyName = matchingBank ? `${matchingBank.bankName} (${matchingBank.holderName})` : rawBank;
+                    partyType = 'Bank Account';
+                }
+                return applyFromTo({
+                    ...t,
+                    source: 'Manual Transaction',
+                    amount: t.amount,
+                    type: t.type
+                }, partyName, partyType);
+            }),
+            ...expenses.map(e => {
+                let partyName = e.projectId?.name || 'General Expense';
+                let partyType = 'Project';
+                if (e.creditorId) {
+                    partyName = e.creditorId.name;
+                    partyType = 'Creditor';
+                }
+                return applyFromTo({
+                    _id: e._id,
+                    date: e.createdAt,
+                    description: `Expense: ${e.name} (${e.category})`,
+                    amount: e.amount,
+                    type: 'debit',
+                    category: 'expense',
+                    source: 'Expense',
+                    paymentMode: e.paymentMode,
+                    bankId: e.bankId,
+                    addedBy: e.addedBy
+                }, partyName, partyType);
+            }),
+            ...vendorPayments.map(v => {
+                const partyName = v.vendorId?.name || 'Unknown Vendor';
+                let partyType = 'Vendor';
+                if (v.creditorId) {
+                    partyType = 'Creditor';
+                }
+                return applyFromTo({
+                    _id: v._id,
+                    date: v.date,
+                    description: v.vendorId ? `Vendor Payment: ${v.vendorId.name}` : `Vendor Payment`,
+                    amount: v.amount,
+                    type: 'debit',
+                    category: 'expense',
+                    source: 'Vendor Payment',
+                    paymentMode: v.paymentMode,
+                    bankId: v.bankId,
+                    addedBy: v.recordedBy
+                }, partyName, partyType);
+            }),
+            ...contractorPayments.map(c => {
+                const partyName = c.contractorName || c.contractorId?.name || 'Unknown Contractor';
+                let partyType = 'Contractor';
+                if (c.creditorId) {
+                    partyType = 'Creditor';
+                }
+                return applyFromTo({
+                    _id: c._id,
+                    date: c.date,
+                    description: `Contractor Payment: ${partyName}`,
+                    amount: c.amount,
+                    type: 'debit',
+                    category: 'expense',
+                    source: 'Contractor Payment',
+                    paymentMode: c.paymentMode,
+                    bankId: c.bankId,
+                    addedBy: c.paidBy
+                }, partyName, partyType);
+            }),
+            ...labourPayments.map(l => {
+                const partyName = l.labourId?.name || 'Unknown Labour';
+                let partyType = 'Labour';
+                if (l.creditorId) {
+                    partyType = 'Creditor';
+                }
+                return applyFromTo({
+                    _id: l._id,
+                    date: l.createdAt,
+                    description: l.labourId ? `Labour Payment: ${l.labourId.name}` : `Labour Payment`,
+                    amount: l.finalAmount,
+                    type: 'debit',
+                    category: 'expense',
+                    source: 'Labour Payment',
+                    paymentMode: l.paymentMode,
+                    bankId: l.bankId,
+                    addedBy: l.userId
+                }, partyName, partyType);
+            })
         ];
 
         // Sort by date (newest first)
@@ -2837,7 +3237,7 @@ const transferBankToBank = async (req, res, next) => {
             amount: parseFloat(amount),
             type: 'debit',
             category: 'other',
-            description: `Transfer to ${destBank.bankName} - ${description || ''}`,
+            description: `Transfer to ${destBank.bankName} (${destBank.holderName}) - ${description || ''}`,
             paymentMode: 'bank',
             date: date || new Date(),
             addedBy: req.user.userId,
@@ -2849,7 +3249,7 @@ const transferBankToBank = async (req, res, next) => {
             amount: parseFloat(amount),
             type: 'credit',
             category: 'other',
-            description: `Transfer from ${sourceBank.bankName} - ${description || ''}`,
+            description: `Transfer from ${sourceBank.bankName} (${sourceBank.holderName}) - ${description || ''}`,
             paymentMode: 'bank',
             date: date || new Date(),
             addedBy: req.user.userId,
