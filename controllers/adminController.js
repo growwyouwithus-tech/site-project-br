@@ -2388,16 +2388,36 @@ const generateReport = async (req, res, next) => {
         const { type, startDate, endDate } = req.query;
         let data;
 
-        const filter = {};
+        const createdAtFilter = {};
         if (startDate || endDate) {
-            filter.createdAt = {};
-            if (startDate) filter.createdAt.$gte = new Date(startDate);
+            createdAtFilter.createdAt = {};
+            if (startDate) createdAtFilter.createdAt.$gte = new Date(startDate);
             if (endDate) {
                 const end = new Date(endDate);
                 end.setHours(23, 59, 59, 999);
-                filter.createdAt.$lte = end;
+                createdAtFilter.createdAt.$lte = end;
             }
         }
+
+        const dateFieldFilter = {};
+        if (startDate || endDate) {
+            dateFieldFilter.date = {};
+            if (startDate) dateFieldFilter.date.$gte = new Date(startDate);
+            if (endDate) {
+                const end = new Date(endDate);
+                end.setHours(23, 59, 59, 999);
+                dateFieldFilter.date.$lte = end;
+            }
+        }
+
+        const attendanceDateFilter = {};
+        if (startDate || endDate) {
+            attendanceDateFilter.date = {};
+            if (startDate) attendanceDateFilter.date.$gte = startDate;
+            if (endDate) attendanceDateFilter.date.$lte = endDate;
+        }
+
+        const filter = { ...createdAtFilter };
 
         switch (type) {
             case 'expenses': {
@@ -2407,9 +2427,9 @@ const generateReport = async (req, res, next) => {
 
                 const [genExps, venExps, conExps, labExps] = await Promise.all([
                     Expense.find(filter).populate('projectId', 'name').populate('addedBy', 'name').lean(),
-                    VendorPayment.find(filter).populate('vendorId', 'name').populate('recordedBy', 'name').lean(),
-                    ContractorPayment.find(filter).populate('contractorId', 'name').populate('paidBy', 'name').lean(),
-                    LabourPayment.find(filter).populate('labourId', 'name').populate('userId', 'name').lean()
+                    VendorPayment.find(dateFieldFilter).populate('vendorId', 'name').populate('recordedBy', 'name').lean(),
+                    ContractorPayment.find(dateFieldFilter).populate('contractorId', 'name').populate('paidBy', 'name').lean(),
+                    LabourPayment.find(dateFieldFilter).populate('labourId', 'name').populate('userId', 'name').lean()
                 ]);
 
                 const allExpenses = [
@@ -2451,11 +2471,21 @@ const generateReport = async (req, res, next) => {
             }
 
             case 'attendance':
-                // For attendance report, we want the actual logs
-                data = await Attendance.find(filter)
-                    .populate('userId', 'name')
-                    .populate('projectId', 'name')
+                data = await Attendance.find(attendanceDateFilter)
+                    .populate('userId', 'name email role')
+                    .populate('projectId', 'name location')
+                    .sort('-date')
                     .lean();
+                data = data.map(a => ({
+                    date: a.date,
+                    time: a.time ? new Date(a.time).toLocaleString('en-IN') : 'N/A',
+                    siteManager: a.userId?.name || 'Unknown',
+                    email: a.userId?.email || '',
+                    project: a.projectId?.name || 'N/A',
+                    location: a.projectId?.location || '',
+                    remarks: a.remarks || '',
+                    hasSelfie: a.photo ? 'Yes' : 'No'
+                }));
                 break;
 
             case 'stock':
@@ -2475,9 +2505,115 @@ const generateReport = async (req, res, next) => {
                     .lean();
                 break;
 
-            case 'contractors':
-                data = await Contractor.find(filter).lean();
+            case 'contractors': {
+                const ContractorPayment = require('../models/ContractorPayment');
+                const contractors = await Contractor.find()
+                    .populate('assignedProjects', 'name location')
+                    .lean();
+                const payments = await ContractorPayment.find(dateFieldFilter).lean();
+
+                data = contractors.map(c => {
+                    const cPayments = payments.filter(p =>
+                        String(p.contractorId) === String(c._id)
+                    );
+                    const paidInPeriod = cPayments.reduce((sum, p) => sum + (p.amount || 0), 0);
+                    const machineRentInPeriod = cPayments.reduce((sum, p) => sum + (p.machineRent || 0), 0);
+                    const currentProjects = (c.assignedProjects || [])
+                        .map(p => (typeof p === 'object' ? p.name : p))
+                        .filter(Boolean)
+                        .join(', ');
+
+                    return {
+                        name: c.name,
+                        mobile: c.mobile,
+                        status: c.status,
+                        currentProjects: currentProjects || 'None',
+                        pendingAmount: c.pendingAmount || 0,
+                        totalPaidAllTime: c.totalPaid || 0,
+                        paidInPeriod,
+                        machineRentInPeriod,
+                        paymentsInPeriod: cPayments.length,
+                        distance: `${c.distanceValue || 0} ${c.distanceUnit || 'km'}`,
+                        expensePerUnit: c.expensePerUnit || 0,
+                        advancePayment: c.advancePayment || 0,
+                        registeredOn: c.createdAt
+                    };
+                });
                 break;
+            }
+
+            case 'vendors': {
+                const VendorPayment = require('../models/VendorPayment');
+                const vendors = await Vendor.find().lean();
+                const payments = await VendorPayment.find(dateFieldFilter).lean();
+                const stocks = await Stock.find(filter)
+                    .populate('projectId', 'name')
+                    .lean();
+
+                data = vendors.map(v => {
+                    const vPayments = payments.filter(p =>
+                        String(p.vendorId) === String(v._id)
+                    );
+                    const vStocks = stocks.filter(s =>
+                        String(s.vendorId) === String(v._id)
+                    );
+                    const paidInPeriod = vPayments.reduce((sum, p) => sum + (p.amount || 0), 0);
+                    const stockValueInPeriod = vStocks.reduce((sum, s) => sum + (s.totalPrice || 0), 0);
+
+                    return {
+                        vendorId: v.vendorId || v._id,
+                        name: v.name,
+                        contact: v.contact,
+                        email: v.email || '',
+                        pendingAmount: v.pendingAmount || 0,
+                        totalSuppliedAllTime: v.totalSupplied || 0,
+                        paidInPeriod,
+                        paymentsInPeriod: vPayments.length,
+                        stockEntriesInPeriod: vStocks.length,
+                        stockValueInPeriod,
+                        materialsSupplied: (v.materialsSupplied || []).join(', ') || 'N/A',
+                        registeredOn: v.createdAt
+                    };
+                });
+                break;
+            }
+
+            case 'siteManagers': {
+                const managers = await User.find({ role: 'sitemanager' })
+                    .select('-password')
+                    .populate('assignedSites', 'name location')
+                    .lean();
+                const attendanceLogs = await Attendance.find(attendanceDateFilter).lean();
+
+                data = managers.map(m => {
+                    const myAttendance = attendanceLogs.filter(a =>
+                        String(a.userId) === String(m._id)
+                    );
+                    const sorted = [...myAttendance].sort((a, b) =>
+                        new Date(b.date) - new Date(a.date)
+                    );
+                    const assignedSites = (m.assignedSites || [])
+                        .map(p => (typeof p === 'object' ? p.name : p))
+                        .filter(Boolean)
+                        .join(', ');
+
+                    return {
+                        name: m.name,
+                        email: m.email,
+                        phone: m.phone || 'N/A',
+                        status: m.active ? 'Active' : 'Inactive',
+                        assignedSites: assignedSites || 'None',
+                        walletBalance: m.walletBalance || 0,
+                        salary: m.salary || 0,
+                        attendanceInPeriod: myAttendance.length,
+                        lastAttendanceDate: sorted[0]?.date || 'N/A',
+                        dateOfJoining: m.dateOfJoining
+                            ? new Date(m.dateOfJoining).toLocaleDateString('en-IN')
+                            : 'N/A'
+                    };
+                });
+                break;
+            }
 
             case 'pl': {
                 const VendorPayment = require('../models/VendorPayment');
@@ -2487,9 +2623,9 @@ const generateReport = async (req, res, next) => {
 
                 const [allGenExps, allVenExps, allConExps, allLabExps, allProjs, capitalIncomes] = await Promise.all([
                     Expense.find(filter).lean(),
-                    VendorPayment.find(filter).lean(),
-                    ContractorPayment.find(filter).lean(),
-                    LabourPayment.find(filter).lean(),
+                    VendorPayment.find(dateFieldFilter).lean(),
+                    ContractorPayment.find(dateFieldFilter).lean(),
+                    LabourPayment.find(dateFieldFilter).lean(),
                     Project.find().lean(),
                     Transaction.find({ ...filter, type: 'credit', category: 'capital' }).lean()
                 ]);
@@ -2523,9 +2659,9 @@ const generateReport = async (req, res, next) => {
 
                 const [fullGenExps, fullVenExps, fullConExps, fullLabExps, fullProjs, fullUsers, fullStocks, fullMachines, fullContractors] = await Promise.all([
                     Expense.find(filter).populate('projectId', 'name').populate('addedBy', 'name').lean(),
-                    VendorPayment.find(filter).populate('vendorId', 'name').populate('recordedBy', 'name').lean(),
-                    ContractorPayment.find(filter).populate('contractorId', 'name').populate('paidBy', 'name').lean(),
-                    LabourPayment.find(filter).populate('labourId', 'name').populate('userId', 'name').lean(),
+                    VendorPayment.find(dateFieldFilter).populate('vendorId', 'name').populate('recordedBy', 'name').lean(),
+                    ContractorPayment.find(dateFieldFilter).populate('contractorId', 'name').populate('paidBy', 'name').lean(),
+                    LabourPayment.find(dateFieldFilter).populate('labourId', 'name').populate('userId', 'name').lean(),
                     Project.find().lean(),
                     User.find().select('name email role').lean(),
                     Stock.find(filter).populate('projectId', 'name').populate('vendorId', 'name').lean(),

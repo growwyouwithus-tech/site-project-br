@@ -568,25 +568,34 @@ const recordStockOut = async (req, res, next) => {
             });
         }
 
+        // Require at least one photo for stock out
+        if (!req.files || req.files.length === 0) {
+            return res.status(400).json({
+                success: false,
+                error: 'Please upload at least one photo for stock out'
+            });
+        }
+
         // Upload photos to Cloudinary in parallel
         let photoUrls = [];
-        if (req.files && req.files.length > 0) {
-            const { uploadToCloudinary } = require('../config/cloudinary');
+        const { uploadToCloudinary } = require('../config/cloudinary');
 
-            // Create array of upload promises
-            const uploadPromises = req.files.map(file =>
-                uploadToCloudinary(file.buffer, 'stock-out')
-                    .catch(error => {
-                        console.error('Error uploading photo:', error);
-                        return null;
-                    })
-            );
+        const uploadPromises = req.files.map(file =>
+            uploadToCloudinary(file.buffer, 'stock-out')
+                .catch(error => {
+                    console.error('Error uploading photo:', error);
+                    return null;
+                })
+        );
 
-            // Wait for all uploads to complete
-            const results = await Promise.all(uploadPromises);
+        const results = await Promise.all(uploadPromises);
+        photoUrls = results.filter(url => url !== null);
 
-            // Filter out failed uploads
-            photoUrls = results.filter(url => url !== null);
+        if (photoUrls.length === 0) {
+            return res.status(400).json({
+                success: false,
+                error: 'Photo upload failed. Please try again'
+            });
         }
 
         // Deduct quantity from stock
