@@ -4,7 +4,7 @@
  */
 
 const mongoose = require('mongoose');
-const { User, Project, Vendor, VendorPayment, Expense, Labour, Contractor, ContractorPayment, LabourPayment, Machine, Stock, LabEquipment, ConsumableGoods, Equipment, Transaction, Transfer, BankDetail, Creditor, CreditorPayment, Attendance, LabourAttendance, ItemName, Notification, DailyReport } = require('../models');
+const { User, Project, Vendor, VendorPayment, Expense, Labour, Contractor, ContractorPayment, LabourPayment, Machine, Stock, LabEquipment, ConsumableGoods, Equipment, Transaction, Transfer, BankDetail, Creditor, CreditorPayment, Attendance, LabourAttendance, ItemName, Notification, DailyReport, StockOut } = require('../models');
 
 // ============ DASHBOARD ============
 
@@ -441,10 +441,61 @@ const deleteUser = async (req, res, next) => {
 // Get all vendors
 const getVendors = async (req, res, next) => {
     try {
-        const vendors = await Vendor.find().sort('-createdAt').lean();
+        const vendors = await Vendor.find().sort('-createdAt');
+        
+        // Auto-fix vendor balances using strict chronological manual ledger
+        const Stock = require('../models/Stock');
+        const VendorPayment = require('../models/VendorPayment');
+        
+        for (const v of vendors) {
+            const stocks = await Stock.find({ vendorId: v._id }).sort('createdAt');
+            const payments = await VendorPayment.find({ vendorId: v._id }).sort('date');
+            
+            const ledger = [];
+            stocks.forEach(s => ledger.push({ type: 'stock', date: s.createdAt, amount: s.totalPrice || 0 }));
+            payments.forEach(p => ledger.push({ 
+                type: 'payment', 
+                date: p.date, 
+                paid: p.amount || 0, 
+                deduction: p.deduction || 0,
+                advanceRecovered: p.advanceRecovered || 0 
+            }));
+            
+            ledger.sort((a, b) => new Date(a.date) - new Date(b.date));
+            
+            let pending = 0;
+            let advance = 0;
+            let totalSupplied = 0;
+            
+            for (const entry of ledger) {
+                if (entry.type === 'stock') {
+                    pending += entry.amount;
+                    totalSupplied += entry.amount;
+                } else if (entry.type === 'payment') {
+                    const reduction = entry.paid + entry.deduction + entry.advanceRecovered;
+                    pending -= reduction;
+                    advance -= entry.advanceRecovered;
+                    if (pending < 0) {
+                        advance += Math.abs(pending);
+                        pending = 0;
+                    }
+                    advance = Math.max(0, advance);
+                }
+            }
+            
+            if (v.totalSupplied !== totalSupplied || v.pendingAmount !== pending || v.advancePayment !== advance) {
+                v.totalSupplied = totalSupplied;
+                v.pendingAmount = pending;
+                v.advancePayment = advance;
+                await v.save();
+            }
+        }
+        
+        const fixedVendors = await Vendor.find().sort('-createdAt').lean();
+
         res.json({
             success: true,
-            data: vendors
+            data: fixedVendors
         });
     } catch (error) {
         next(error);
@@ -1245,7 +1296,8 @@ const createMachine = async (req, res, next) => {
             machinePhoto: machinePhotoUrl,
             // Convert empty string to null for optional ObjectId fields
             projectId: req.body.projectId && req.body.projectId.trim() !== '' ? req.body.projectId : null,
-            availableLocation: initialStatus === 'available' ? availableLocation : ''
+            availableLocation: initialStatus === 'available' ? availableLocation : '',
+            rentedAt: req.body.ownershipType === 'rented' ? new Date() : null
         };
 
         const machine = new Machine(machineData);
@@ -1322,6 +1374,122 @@ const updateMachine = async (req, res, next) => {
                 if (machine.projectId) {
                     await Project.findByIdAndUpdate(machine.projectId, { $inc: { expenses: Number(maintenanceCost) } });
                 }
+            }
+        }
+
+        // Detect when machine is leaving 'in-use' status (unassigned/made available/maintenance)
+        const isLeavingInUse = machine.status === 'in-use' && (updates.status === 'available' || updates.status === 'maintenance' || updates.status === 'returned');
+        
+        if (isLeavingInUse) {
+            const assignedDate = new Date(machine.assignedAt);
+            const returnDate = new Date();
+            const diffTime = Math.abs(returnDate - assignedDate); // Total milliseconds
+
+            // --- Calculate Paused Duration ---
+            let totalPausedMs = 0;
+            if (machine.rentPausedHistory && machine.rentPausedHistory.length > 0) {
+                machine.rentPausedHistory.forEach(pause => {
+                    const pauseStart = new Date(pause.pausedAt).getTime();
+                    const pauseEnd = pause.resumedAt ? new Date(pause.resumedAt).getTime() : returnDate.getTime();
+                    if (pauseStart >= assignedDate.getTime()) {
+                        const effectiveEnd = Math.min(pauseEnd, returnDate.getTime());
+                        totalPausedMs += (effectiveEnd - pauseStart);
+                    }
+                });
+            }
+
+            if (machine.isRentPaused && machine.rentPausedAt) {
+                const currentPauseStart = new Date(machine.rentPausedAt).getTime();
+                if (currentPauseStart >= assignedDate.getTime()) {
+                    totalPausedMs += (returnDate.getTime() - currentPauseStart);
+                }
+            }
+
+            const billableMs = Math.max(0, diffTime - totalPausedMs);
+            // Contractor/assignment rate is machine.assignedRentalPerDay
+            const rate = parseFloat(machine.assignedRentalPerDay) || parseFloat(machine.perDayExpense) || 0;
+
+            let totalRent = 0;
+            let diffDisplay = '';
+            let diffValue = 0;
+
+            if (machine.assignedRentalType === 'perHour') {
+                const hours = billableMs / (1000 * 60 * 60);
+                totalRent = hours * rate;
+                diffDisplay = `${hours.toFixed(2)} hrs`;
+                diffValue = hours * 60;
+            } else {
+                const billableDays = billableMs / (1000 * 60 * 60 * 24);
+                const chargeableDays = Math.ceil(billableDays);
+                totalRent = chargeableDays * rate;
+                diffDisplay = `${chargeableDays} days`;
+                diffValue = chargeableDays;
+            }
+
+            if (isNaN(totalRent)) totalRent = 0;
+            totalRent = Math.round(totalRent * 100) / 100;
+
+            const contractorId = machine.assignedToContractor;
+            const targetProjectId = machine.projectId;
+
+            // Update machine statistics
+            machine.returnedAt = returnDate;
+            machine.projectId = null;
+            machine.assignedToContractor = null;
+            machine.assignedAsRental = false;
+            machine.assignedRentalPerDay = 0;
+            machine.assignedRentalType = 'perDay';
+            machine.isRentPaused = false;
+            machine.rentPausedAt = null;
+
+            // Clear assignment fields from updates so they don't overwrite our cleared values
+            delete updates.projectId;
+            delete updates.assignedToContractor;
+            delete updates.assignedAsRental;
+            delete updates.assignedRentalPerDay;
+            delete updates.assignedRentalType;
+            delete updates.rentalType; // Prevent frontend unassign payload from resetting creditor's type
+            delete updates.isRentPaused;
+            delete updates.rentPausedAt;
+
+            // Update History
+            if (machine.assignmentHistory && machine.assignmentHistory.length > 0) {
+                const lastIdx = machine.assignmentHistory.length - 1;
+                machine.assignmentHistory[lastIdx].returnedAt = returnDate;
+                machine.assignmentHistory[lastIdx].returnStatus = 'returned';
+                machine.assignmentHistory[lastIdx].totalRent = totalRent;
+                machine.assignmentHistory[lastIdx].durationMinutes = machine.assignedRentalType === 'perHour' ? diffValue : diffValue * 24 * 60;
+            }
+
+            // If unassigned from a contractor, it is Capital/Income deduction
+            if (contractorId) {
+                const Transaction = require('../models/Transaction');
+                const transaction = new Transaction({
+                    amount: totalRent,
+                    type: 'credit',
+                    category: 'capital',
+                    description: `Machine Rent Income: ${machine.name} [${machine.plateNumber || ''}] from Contractor`,
+                    paymentMode: 'cash',
+                    date: returnDate,
+                    addedBy: req.user.userId
+                });
+                await transaction.save();
+
+                const Contractor = require('../models/Contractor');
+                await Contractor.findByIdAndUpdate(contractorId, { $inc: { pendingAmount: -totalRent } });
+            } else if (targetProjectId) {
+                // If unassigned from a project directly (internal project usage), it is a project expense
+                const expense = new Expense({
+                    projectId: targetProjectId,
+                    name: `Machine Project Usage: ${machine.name}${machine.plateNumber ? ' [' + machine.plateNumber + ']' : ''}`,
+                    amount: totalRent,
+                    category: 'machine_rental',
+                    remarks: `${diffDisplay} @ ₹${rate}/${machine.rentalType === 'perHour' ? 'hr' : 'day'}. Assigned: ${assignedDate.toLocaleDateString()}, Unassigned: ${returnDate.toLocaleDateString()}`,
+                    addedBy: req.user.userId
+                });
+                await expense.save();
+
+                await Project.findByIdAndUpdate(targetProjectId, { $inc: { expenses: totalRent } });
             }
         }
 
@@ -1423,16 +1591,17 @@ const returnRentedMachine = async (req, res, next) => {
             });
         }
 
-        // Verify machine is in-use
-        if (machine.status !== 'in-use') {
+        // Verify machine is in-use or available
+        if (machine.status !== 'in-use' && machine.status !== 'available') {
             return res.status(400).json({
                 success: false,
-                error: 'Machine is not currently in use'
+                error: 'Machine must be in use or available to be returned'
             });
         }
 
         // Calculate rental details
-        const assignedDate = new Date(machine.assignedAt);
+        const isRented = machine.ownershipType === 'rented';
+        const assignedDate = isRented ? new Date(machine.rentedAt || machine.createdAt) : new Date(machine.assignedAt);
         const returnDate = new Date();
         const diffTime = Math.abs(returnDate - assignedDate); // Total milliseconds
 
@@ -1469,7 +1638,7 @@ const returnRentedMachine = async (req, res, next) => {
         const billableMs = Math.max(0, diffTime - totalPausedMs);
 
         // This is the RATE (either per day or per hour)
-        const rate = parseFloat(machine.assignedAsRental ? machine.assignedRentalPerDay : machine.perDayExpense) || 0;
+        const rate = isRented ? (parseFloat(machine.perDayExpense) || 0) : (parseFloat(machine.assignedAsRental ? machine.assignedRentalPerDay : machine.perDayExpense) || 0);
 
         let totalRent = 0;
         let diffDisplay = '';
@@ -1519,7 +1688,7 @@ const returnRentedMachine = async (req, res, next) => {
             machine.availableLocation = '';
         }
         machine.returnedAt = returnDate;
-        machine.totalRentPaid = totalRent;
+        machine.totalRentPaid = (machine.totalRentPaid || 0) + totalRent;
         machine.projectId = null;
         machine.assignedToContractor = null;
         machine.assignedAsRental = false;
@@ -1562,6 +1731,23 @@ const returnRentedMachine = async (req, res, next) => {
                     { $inc: { expenses: totalRent } }
                 );
             }
+
+            // Add the rent amount to the creditor's account
+            if (machine.creditorId) {
+                await Creditor.findByIdAndUpdate(machine.creditorId, {
+                    $inc: { currentBalance: totalRent },
+                    $push: {
+                        transactions: {
+                            type: 'credit',
+                            amount: totalRent,
+                            date: returnDate,
+                            description: `Machine Rental: ${machine.name}${machine.plateNumber ? ' [' + machine.plateNumber + ']' : ''} for ${diffDisplay}`,
+                            refId: expense._id,
+                            refModel: 'Expense'
+                        }
+                    }
+                });
+            }
         } else if (isIncome) {
             // It's income (Capital). Create a Transaction to record the capital generated.
             const Transaction = require('../models/Transaction');
@@ -1603,6 +1789,47 @@ const returnRentedMachine = async (req, res, next) => {
                     totalRent
                 }
             }
+        });
+    } catch (error) {
+        next(error);
+    }
+};
+
+// Re-rent a returned machine (make it available for assignment again)
+const reRentMachine = async (req, res, next) => {
+    try {
+        const { id } = req.params;
+        const machine = await Machine.findById(id);
+
+        if (!machine) {
+            return res.status(404).json({ success: false, error: 'Machine not found' });
+        }
+
+        if (machine.status !== 'returned') {
+            return res.status(400).json({ success: false, error: 'Only returned machines can be re-rented' });
+        }
+
+        // Reset machine for a fresh rental cycle
+        machine.status = 'available';
+        machine.assignedAt = null;
+        machine.returnedAt = null;
+        machine.rentedAt = new Date(); // Start fresh cycle from today
+        machine.totalRentPaid = 0;
+        machine.projectId = null;
+        machine.assignedToContractor = null;
+        machine.assignedAsRental = false;
+        machine.assignedRentalPerDay = 0;
+        machine.isRentPaused = false;
+        machine.rentPausedAt = null;
+        machine.rentPausedHistory = [];
+        machine.availableLocation = req.body.availableLocation || 'Main Yard';
+
+        await machine.save();
+
+        res.json({
+            success: true,
+            message: 'Machine re-activated for rental successfully',
+            data: machine
         });
     } catch (error) {
         next(error);
@@ -3626,6 +3853,25 @@ const getProfile = async (req, res, next) => {
     }
 };
 
+// Get Fuel Usage for a Machine
+const getMachineFuelUsage = async (req, res, next) => {
+    try {
+        const { id } = req.params;
+        const fuelUsage = await StockOut.find({ machineId: id })
+            .populate('projectId', 'name')
+            .populate('recordedBy', 'name')
+            .sort({ date: -1 });
+
+        res.json({
+            success: true,
+            data: fuelUsage
+        });
+    } catch (error) {
+        console.error('Error fetching machine fuel usage:', error);
+        next(error);
+    }
+};
+
 module.exports = {
     getDashboard,
     getProjects,
@@ -3638,6 +3884,7 @@ module.exports = {
     updateMachine,
     deleteMachine,
     returnRentedMachine,
+    reRentMachine,
     getStocks,
     createStock,
     updateStock,
@@ -3700,5 +3947,6 @@ module.exports = {
     sendNotification,
     markNotificationRead,
     verifyPassword,
-    getProfile
+    getProfile,
+    getMachineFuelUsage
 };

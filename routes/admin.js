@@ -28,6 +28,7 @@ const {
   updateMachine,
   deleteMachine,
   returnRentedMachine,
+  reRentMachine,
   getStocks,
   createStock,
   updateStock,
@@ -82,7 +83,8 @@ const {
   getItemNames,
   deleteItemName,
   verifyPassword,
-  getProfile
+  getProfile,
+  getMachineFuelUsage
 } = require('../controllers/adminController');
 
 const {
@@ -134,6 +136,8 @@ router.post('/machines', uploadSingle, machineValidation, createMachine);
 router.put('/machines/:id', uploadSingle, updateMachine);
 router.delete('/machines/:id', deleteMachine);
 router.post('/machines/:id/return', returnRentedMachine);
+router.post('/machines/:id/re-rent', reRentMachine);
+router.get('/machines/:id/fuel-usage', getMachineFuelUsage);
 
 // Stock
 router.get('/stocks', getStocks);

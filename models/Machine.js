@@ -38,9 +38,9 @@ const machineSchema = new mongoose.Schema({
         enum: ['own', 'rented'],
         default: 'own'
     },
-    vendorName: {
-        type: String,
-        trim: true
+    creditorId: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'Creditor'
     },
     machineCategory: {
         type: String,
@@ -71,7 +71,15 @@ const machineSchema = new mongoose.Schema({
         enum: ['perDay', 'perHour'],
         default: 'perDay'
     },
+    assignedRentalType: {
+        type: String,
+        enum: ['perDay', 'perHour'],
+        default: 'perDay'
+    },
     assignedAt: {
+        type: Date
+    },
+    rentedAt: {
         type: Date
     },
     assignedToContractor: {

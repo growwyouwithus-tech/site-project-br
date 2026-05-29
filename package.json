@@ -8,7 +8,8 @@
     "dev": "nodemon server.js",
     "seed": "node scripts/seedDatabase.js",
     "setup-local-db": "node scripts/setup-local-mongodb.js",
-    "fix-mongodb": "node scripts/fix-mongodb-connection.js"
+    "fix-mongodb": "node scripts/fix-mongodb-connection.js",
+    "fix": "node fixVendors.js"
   },
   "keywords": [
     "construction",

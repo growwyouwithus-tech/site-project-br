@@ -29,6 +29,10 @@ const stockOutSchema = new mongoose.Schema({
         required: true, // e.g., "Block A", "Road work", etc.
         trim: true
     },
+    machineId: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'Machine'
+    },
     date: {
         type: Date,
         default: Date.now

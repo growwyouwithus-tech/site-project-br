@@ -21,7 +21,7 @@ const attendanceSchema = new mongoose.Schema({
     },
     photo: {
         type: String,
-        required: [true, 'Selfie is required for attendance']
+        required: false
     },
     remarks: {
         type: String

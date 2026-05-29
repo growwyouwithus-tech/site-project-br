@@ -60,26 +60,23 @@ const markAttendance = async (req, res, next) => {
         const { projectId, date, photo, remarks } = req.body;
         const userId = req.user.userId;
 
-        if (!photo || (typeof photo === 'string' && !photo.trim())) {
-            return res.status(400).json({
-                success: false,
-                error: 'Selfie is required for attendance'
-            });
-        }
-
-        let photoUrl = photo.trim();
-        if (photoUrl.startsWith('data:image/')) {
-            const { cloudinary } = require('../config/cloudinary');
-            const result = await cloudinary.uploader.upload(photoUrl, {
-                folder: 'attendance',
-                resource_type: 'image',
-                transformation: [
-                    { width: 1200, height: 1200, crop: 'limit' },
-                    { quality: 'auto:good' },
-                    { fetch_format: 'auto' }
-                ]
-            });
-            photoUrl = result.secure_url;
+        // Selfie temporarily made optional for PC testing
+        let photoUrl = '';
+        if (photo && typeof photo === 'string' && photo.trim()) {
+            photoUrl = photo.trim();
+            if (photoUrl.startsWith('data:image/')) {
+                const { cloudinary } = require('../config/cloudinary');
+                const result = await cloudinary.uploader.upload(photoUrl, {
+                    folder: 'attendance',
+                    resource_type: 'image',
+                    transformation: [
+                        { width: 1200, height: 1200, crop: 'limit' },
+                        { quality: 'auto:good' },
+                        { fetch_format: 'auto' }
+                    ]
+                });
+                photoUrl = result.secure_url;
+            }
         }
 
         const attendance = new Attendance({
@@ -546,7 +543,7 @@ const getStocks = async (req, res, next) => {
 // Record Stock Out (Usage) with automatic deduction
 const recordStockOut = async (req, res, next) => {
     try {
-        const { projectId, materialName, quantity, unit, usedFor, remarks } = req.body;
+        const { projectId, materialName, quantity, unit, usedFor, remarks, machineId } = req.body;
         const userId = req.user.userId;
 
         const quantityVal = parseFloat(quantity);
@@ -600,10 +597,12 @@ const recordStockOut = async (req, res, next) => {
 
         // Deduct quantity from stock
         stock.quantity -= quantityVal;
+        stock.consumed = (stock.consumed || 0) + quantityVal;
+        stock.totalPrice = stock.quantity * stock.unitPrice;
         await stock.save();
 
         // Create StockOut record
-        const stockOut = await StockOut.create({
+        const stockOutData = {
             projectId,
             materialName,
             quantity: quantityVal,
@@ -612,7 +611,13 @@ const recordStockOut = async (req, res, next) => {
             remarks,
             photos: photoUrls,
             recordedBy: userId
-        });
+        };
+        
+        if (machineId) {
+            stockOutData.machineId = machineId;
+        }
+
+        const stockOut = await StockOut.create(stockOutData);
 
         console.log(`âœ… Stock Out recorded: ${materialName} - ${quantityVal} ${unit}${photoUrls.length > 0 ? ` with ${photoUrls.length} photo(s)` : ''}`);
 
@@ -2268,7 +2273,9 @@ const getMachineDetails = async (req, res, next) => {
 
         console.log(`📊 Calc for Machine ${id}: TotalH: ${totalHours}, PausedH: ${totalPausedHours}, BillableH: ${billableHours}, Rate: ${rate}`);
 
-        if (machine.rentalType === 'perHour') {
+        const rentalTypeToUse = machine.assignedRentalType || machine.rentalType || 'perDay';
+
+        if (rentalTypeToUse === 'perHour') {
             duration = billableHours;
             totalRent = billableHours * rate;
         } else {
@@ -2289,7 +2296,7 @@ const getMachineDetails = async (req, res, next) => {
                     billableHours: billableHours,
                     billableDays: (billableHours / 24),
                     rate: rate,
-                    type: machine.rentalType,
+                    type: rentalTypeToUse,
                     estimatedTotalRent: Math.round(totalRent)
                 }
             }
