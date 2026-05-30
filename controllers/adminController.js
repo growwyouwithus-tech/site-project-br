@@ -1016,6 +1016,17 @@ const updateContractor = async (req, res, next) => {
         }
 
         if (isAssigningNewProject) {
+            const totalWorkAmount = (contractor.distanceValue || 0) * (contractor.expensePerUnit || 0);
+            const totalPaid = contractor.totalPaid || 0;
+            const currentTotalMachineRent = req.body.currentTotalMachineRent || 0;
+            // Provide a small margin (e.g., 0.1) for floating point errors
+            if (totalWorkAmount - totalPaid - currentTotalMachineRent > 0.1) {
+                return res.status(400).json({
+                    success: false,
+                    error: 'Please clear the pending payment for the current project before assigning a new one.'
+                });
+            }
+
             const projectIds = contractor.assignedProjects || [];
             const oldProjId = projectIds.length > 0 ? projectIds[0] : null;
             let projName = 'Unassigned Contract';
