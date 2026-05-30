@@ -1307,6 +1307,7 @@ const createMachine = async (req, res, next) => {
             machinePhoto: machinePhotoUrl,
             // Convert empty string to null for optional ObjectId fields
             projectId: req.body.projectId && req.body.projectId.trim() !== '' ? req.body.projectId : null,
+            creditorId: req.body.creditorId && req.body.creditorId.trim() !== '' ? req.body.creditorId : null,
             availableLocation: initialStatus === 'available' ? availableLocation : '',
             rentedAt: req.body.ownershipType === 'rented' ? new Date() : null
         };
