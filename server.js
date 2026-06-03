@@ -280,6 +280,9 @@ server.listen(PORT, () => {
   console.log('   Admin: admin@construction.com / password123');
   console.log('   Site Manager: rajesh@construction.com / manager123');
   console.log('\n============================================\n');
+  
+  // Disable console.log after startup to prevent log spam from controllers
+  console.log = () => {};
 });
 
 // Handle unhandled promise rejections
