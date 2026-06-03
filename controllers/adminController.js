@@ -955,6 +955,7 @@ const getContractors = async (req, res, next) => {
             .populate('assignedProjects', 'name')
             .sort('-createdAt')
             .lean();
+
         res.json({
             success: true,
             data: contractors
@@ -1016,16 +1017,6 @@ const updateContractor = async (req, res, next) => {
         }
 
         if (isAssigningNewProject) {
-            const totalWorkAmount = (contractor.distanceValue || 0) * (contractor.expensePerUnit || 0);
-            const totalPaid = contractor.totalPaid || 0;
-            const currentTotalMachineRent = req.body.currentTotalMachineRent || 0;
-            // Provide a small margin (e.g., 0.1) for floating point errors
-            if (totalWorkAmount - totalPaid - currentTotalMachineRent > 0.1) {
-                return res.status(400).json({
-                    success: false,
-                    error: 'Please clear the pending payment for the current project before assigning a new one.'
-                });
-            }
 
             const projectIds = contractor.assignedProjects || [];
             const oldProjId = projectIds.length > 0 ? projectIds[0] : null;
@@ -1155,17 +1146,35 @@ const createContractorPayment = async (req, res, next) => {
         const advanceRecoveredVal = parseFloat(advanceRecovered) || 0;
 
         // Create Payment Record
+        // Parse projectId prefix (hist_ or curr_) BEFORE creating payment record
+        let isPastProject = false;
+        let actualProjectId = req.body.projectId;
+
+        if (req.body.projectId) {
+            const rawId = String(req.body.projectId).trim();
+            if (rawId.startsWith('hist_')) {
+                isPastProject = true;
+                actualProjectId = rawId.replace('hist_', '');
+            } else if (rawId.startsWith('curr_')) {
+                isPastProject = false;
+                actualProjectId = rawId.replace('curr_', '');
+            }
+        }
+
+        // Determine the clean projectId for the payment record
+        const paymentProjectId = (actualProjectId && String(actualProjectId).trim() !== '')
+            ? actualProjectId
+            : (contractor.assignedProjects && contractor.assignedProjects.length > 0
+                ? contractor.assignedProjects[0]
+                : undefined);
+
         const payment = new ContractorPayment({
             contractorId,
             contractorName: contractor.name,
-            projectId: (req.body.projectId && String(req.body.projectId).trim() !== '')
-                ? req.body.projectId
-                : (contractor.assignedProjects && contractor.assignedProjects.length > 0
-                    ? contractor.assignedProjects[0]
-                    : undefined),
+            projectId: paymentProjectId,
             amount: paidAmount,
             date: date || Date.now(),
-            remark: remarks, // using remarks from body
+            remark: remarks,
             paymentMode: paymentMode || 'cash',
             bankId: bankId && bankId !== '' ? bankId : undefined,
             creditorId: creditorId && creditorId !== '' ? creditorId : undefined,
@@ -1176,40 +1185,54 @@ const createContractorPayment = async (req, res, next) => {
         });
         await payment.save();
 
-        // Update Contractor Financials (Advance/Pending)
-        let currentPending = contractor.pendingAmount || 0;
-        const currentAdvance = contractor.advancePayment || 0;
-        const totalWorkAmount = (contractor.distanceValue || 0) * (contractor.expensePerUnit || 0);
+        // Update Contractor Financials (Advance/Pending) - ONLY FOR CURRENT PROJECT
+        if (!isPastProject) {
+            let currentPending = contractor.pendingAmount || 0;
+            const currentAdvance = contractor.advancePayment || 0;
+            const totalWorkAmount = (contractor.distanceValue || 0) * (contractor.expensePerUnit || 0);
 
-        // If pending is 0 but total work exists and totalPaid is 0, initialize pending
-        if (currentPending === 0 && totalWorkAmount > 0 && (contractor.totalPaid || 0) === 0) {
-            currentPending = totalWorkAmount;
-        }
+            // If pending is 0 but total work exists and totalPaid is 0, initialize pending
+            if (currentPending === 0 && totalWorkAmount > 0 && (contractor.totalPaid || 0) === 0) {
+                currentPending = totalWorkAmount;
+            }
 
-        if (isAdvance === 'true' || isAdvance === true) {
-            // Explicit Advance: Just add to advance account
-            contractor.advancePayment = currentAdvance + paidAmount;
-        } else {
-            // Regular Payment: Subtract (Cash + Rent + Adjustment) from pending, excess to advance
-            const reducePending = paidAmount + rentDeductedVal + advanceRecoveredVal;
-            let newPending = currentPending - reducePending;
-
-            if (newPending < 0) {
-                // If we paid/adjusted more than pending, only the CASH part that exceeds pending goes to advance
-                // But usually, excess is just treated as new advance
-                contractor.advancePayment = currentAdvance + Math.abs(newPending) - advanceRecoveredVal;
-                contractor.pendingAmount = 0;
+            if (isAdvance === 'true' || isAdvance === true) {
+                // Explicit Advance: Just add to advance account
+                contractor.advancePayment = currentAdvance + paidAmount;
             } else {
-                contractor.pendingAmount = newPending;
-                // If we used advance to recover, reduce it
-                if (advanceRecoveredVal > 0) {
-                    contractor.advancePayment = Math.max(0, currentAdvance - advanceRecoveredVal);
+                // Regular Payment: Subtract (Cash + Rent + Adjustment) from pending, excess to advance
+                const reducePending = paidAmount + rentDeductedVal + advanceRecoveredVal;
+                let newPending = currentPending - reducePending;
+
+                if (newPending < 0) {
+                    contractor.advancePayment = currentAdvance + Math.abs(newPending) - advanceRecoveredVal;
+                    contractor.pendingAmount = 0;
+                } else {
+                    contractor.pendingAmount = newPending;
+                    if (advanceRecoveredVal > 0) {
+                        contractor.advancePayment = Math.max(0, currentAdvance - advanceRecoveredVal);
+                    }
                 }
             }
+            contractor.totalPaid = (contractor.totalPaid || 0) + paidAmount;
         }
 
-        // Track cumulative cash paid
-        contractor.totalPaid = (contractor.totalPaid || 0) + paidAmount;
+        // Update projectHistory entry if payment is for a past project
+        if (isPastProject && contractor.projectHistory && contractor.projectHistory.length > 0) {
+            const historyIndex = contractor.projectHistory.findIndex(h => 
+                (h._id && String(h._id) === actualProjectId) || String(h.projectId) === actualProjectId
+            );
+            if (historyIndex !== -1) {
+                const histEntry = contractor.projectHistory[historyIndex];
+                if (isAdvance === 'true' || isAdvance === true) {
+                    histEntry.advancePayment = (histEntry.advancePayment || 0) + paidAmount;
+                } else {
+                    histEntry.totalPaid = (histEntry.totalPaid || 0) + paidAmount;
+                }
+                contractor.projectHistory[historyIndex] = histEntry;
+                contractor.markModified('projectHistory');
+            }
+        }
 
         await contractor.save();
 
@@ -2232,23 +2255,27 @@ const getAccounts = async (req, res, next) => {
                 .populate('vendorId', 'name')
                 .populate('bankId', 'bankName')
                 .populate('creditorId', 'name')
+                .populate('recordedBy', 'name role')
                 .sort('-date')
                 .limit(100)
                 .lean(),
             ContractorPayment.find(dateFilter.$gte || dateFilter.$lte ? { date: dateFilter } : {})
                 .populate('bankId', 'bankName')
                 .populate('creditorId', 'name')
+                .populate('paidBy', 'name role')
                 .sort('-date')
                 .limit(100)
                 .lean(),
             LabourPayment.find(dateFilter.$gte || dateFilter.$lte ? { date: dateFilter } : {})
                 .populate('labourId', 'name')
+                .populate('userId', 'name role')
                 .sort('-createdAt')
                 .limit(100)
                 .lean(),
             CreditorPayment.find(dateFilter.$gte || dateFilter.$lte ? { date: dateFilter } : {})
                 .populate('creditorId', 'name')
                 .populate('bankId', 'bankName')
+                .populate('recordedBy', 'name role')
                 .sort('-date')
                 .limit(100)
                 .lean()
@@ -2292,7 +2319,8 @@ const getAccounts = async (req, res, next) => {
                 projectId: t.projectId,
                 relatedId: t.relatedId,
                 addedBy: t.addedBy,
-                creditorId: t.creditorId
+                creditorId: t.creditorId,
+                recordedBy: t.addedBy ? `${t.addedBy.name} (${t.addedBy.role})` : 'System'
             });
             // Append Project Name to description if exists
             const lastIdx = allTransactions.length - 1;
@@ -2315,7 +2343,9 @@ const getAccounts = async (req, res, next) => {
                 type: 'debit',
                 category: 'expense',
                 paymentMode: normalizeMode(e.paymentMode),
-                source: e.addedBy ? `${e.addedBy.name} (${e.addedBy.role})` : 'System'
+                source: 'Expense',
+                receiptUrl: e.receipt,
+                recordedBy: e.addedBy ? `${e.addedBy.name} (${e.addedBy.role})` : 'System'
             });
         });
 
@@ -2330,7 +2360,9 @@ const getAccounts = async (req, res, next) => {
                 type: 'debit',
                 category: 'vendor_payment',
                 paymentMode: normalizeMode(vp.paymentMode),
-                source: vp.bankId ? `Bank: ${vp.bankId.bankName}` : (vp.creditorId ? `Creditor: ${vp.creditorId.name}` : (vp.paymentMode === 'cash' ? 'Main Cash' : vp.paymentMode))
+                source: vp.bankId ? `Bank: ${vp.bankId.bankName}` : (vp.creditorId ? `Creditor: ${vp.creditorId.name}` : (vp.paymentMode === 'cash' ? 'Main Cash' : vp.paymentMode)),
+                receiptUrl: vp.receiptUrl,
+                recordedBy: vp.recordedBy ? `${vp.recordedBy.name} (${vp.recordedBy.role})` : 'System'
             });
         });
 
@@ -2345,7 +2377,9 @@ const getAccounts = async (req, res, next) => {
                 type: 'debit',
                 category: 'contractor_payment',
                 paymentMode: normalizeMode(cp.paymentMode),
-                source: cp.bankId ? `Bank: ${cp.bankId.bankName}` : (cp.creditorId ? `Creditor: ${cp.creditorId.name}` : (cp.paymentMode === 'cash' ? 'Main Cash' : cp.paymentMode))
+                source: cp.bankId ? `Bank: ${cp.bankId.bankName}` : (cp.creditorId ? `Creditor: ${cp.creditorId.name}` : (cp.paymentMode === 'cash' ? 'Main Cash' : cp.paymentMode)),
+                receiptUrl: cp.receiptUrl,
+                recordedBy: cp.paidBy ? `${cp.paidBy.name} (${cp.paidBy.role})` : 'System'
             });
         });
 
@@ -2360,7 +2394,8 @@ const getAccounts = async (req, res, next) => {
                 type: 'debit',
                 category: 'creditor_payment',
                 paymentMode: normalizeMode(cp.paymentMode),
-                source: cp.bankId ? `Bank: ${cp.bankId.bankName}` : (cp.paymentMode === 'cash' ? 'Main Cash' : cp.paymentMode)
+                source: cp.bankId ? `Bank: ${cp.bankId.bankName}` : (cp.paymentMode === 'cash' ? 'Main Cash' : cp.paymentMode),
+                recordedBy: cp.recordedBy ? `${cp.recordedBy.name} (${cp.recordedBy.role})` : 'System'
             });
         });
 
@@ -2375,7 +2410,8 @@ const getAccounts = async (req, res, next) => {
                 type: 'debit',
                 category: 'expense',
                 paymentMode: normalizeMode(lp.paymentMode),
-                source: 'Labour Payment'
+                source: 'Labour Payment',
+                recordedBy: lp.userId ? `${lp.userId.name} (${lp.userId.role})` : 'System'
             });
         });
 
@@ -2624,7 +2660,7 @@ const allocateFunds = async (req, res, next) => {
 
 const generateReport = async (req, res, next) => {
     try {
-        const { type, startDate, endDate } = req.query;
+        const { type, startDate, endDate, projectId } = req.query;
         let data;
 
         const createdAtFilter = {};
@@ -2637,6 +2673,9 @@ const generateReport = async (req, res, next) => {
                 createdAtFilter.createdAt.$lte = end;
             }
         }
+        if (projectId) {
+            createdAtFilter.projectId = projectId;
+        }
 
         const dateFieldFilter = {};
         if (startDate || endDate) {
@@ -2648,12 +2687,18 @@ const generateReport = async (req, res, next) => {
                 dateFieldFilter.date.$lte = end;
             }
         }
+        if (projectId) {
+            dateFieldFilter.projectId = projectId;
+        }
 
         const attendanceDateFilter = {};
         if (startDate || endDate) {
             attendanceDateFilter.date = {};
             if (startDate) attendanceDateFilter.date.$gte = startDate;
             if (endDate) attendanceDateFilter.date.$lte = endDate;
+        }
+        if (projectId) {
+            attendanceDateFilter.projectId = projectId;
         }
 
         const filter = { ...createdAtFilter };
@@ -3736,17 +3781,36 @@ const deleteContractorPayment = async (req, res, next) => {
 
         const contractor = await Contractor.findById(payment.contractorId);
         if (contractor) {
-            let amountLeft = payment.amount;
-            if (contractor.advancePayment > 0) {
-                const reduceAdv = Math.min(contractor.advancePayment, amountLeft);
-                contractor.advancePayment -= reduceAdv;
-                amountLeft -= reduceAdv;
+            // Check if the deleted payment was for a past project in history
+            const historyIndex = contractor.projectHistory ? contractor.projectHistory.findIndex(h => 
+                String(h.projectId) === String(payment.projectId)
+            ) : -1;
+            const isPastProject = historyIndex !== -1;
+
+            if (isPastProject) {
+                // Revert past project payment
+                const histEntry = contractor.projectHistory[historyIndex];
+                if (payment.isAdvance) {
+                    histEntry.advancePayment = Math.max(0, (histEntry.advancePayment || 0) - payment.amount);
+                } else {
+                    histEntry.totalPaid = Math.max(0, (histEntry.totalPaid || 0) - payment.amount);
+                }
+                contractor.projectHistory[historyIndex] = histEntry;
+                contractor.markModified('projectHistory');
+            } else {
+                // Revert current project payment
+                let amountLeft = payment.amount;
+                if (contractor.advancePayment > 0) {
+                    const reduceAdv = Math.min(contractor.advancePayment, amountLeft);
+                    contractor.advancePayment -= reduceAdv;
+                    amountLeft -= reduceAdv;
+                }
+                if (amountLeft > 0) {
+                    contractor.pendingAmount = (contractor.pendingAmount || 0) + amountLeft;
+                }
+                // Reverse the totalPaid
+                contractor.totalPaid = Math.max(0, (contractor.totalPaid || 0) - payment.amount);
             }
-            if (amountLeft > 0) {
-                contractor.pendingAmount = (contractor.pendingAmount || 0) + amountLeft;
-            }
-            // Reverse the totalPaid
-            contractor.totalPaid = Math.max(0, (contractor.totalPaid || 0) - payment.amount);
             await contractor.save();
         }
 

@@ -6,7 +6,7 @@
 const express = require('express');
 const router = express.Router();
 const { isAuthenticated, isSiteManager } = require('../middleware/auth');
-const { uploadSingle, uploadPhotos } = require('../middleware/upload');
+const { uploadSingle, uploadPhotos, uploadReceipt } = require('../middleware/upload');
 const {
   labourValidation,
   attendanceValidation,
@@ -164,11 +164,11 @@ router.post('/transfer-funds', transferFunds);
 
 // Contractors
 router.get('/contractors', getContractors);
-router.post('/payments/contractor', payContractor);
+router.post('/payments/contractor', uploadReceipt, payContractor);
 router.get('/payments/contractor', getContractorPayments); // Added
 
 // Vendor Payments
-router.post('/payments/vendor', payVendor);
+router.post('/payments/vendor', uploadReceipt, payVendor);
 router.get('/payments/vendor', getVendorPayments); // Added
 
 // Site Manager Machines

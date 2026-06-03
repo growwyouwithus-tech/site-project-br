@@ -1,0 +1,70 @@
+[
+  {
+    "_id": "6a1a7f7db599cda83738b880",
+    "name": "arun",
+    "mobile": "7845129856",
+    "address": "shikandra agra",
+    "distanceValue": 5,
+    "distanceUnit": "km",
+    "expensePerUnit": 15000,
+    "assignedProjects": [
+      "6a1a7f1eb599cda83738b859"
+    ],
+    "status": "inactive",
+    "pendingAmount": 0,
+    "totalPaid": 275000,
+    "advancePayment": 0,
+    "projectHistory": [
+      {
+        "projectId": "6a1a7f1eb599cda83738b859",
+        "name": "agar",
+        "completedAt": "2026-05-30T06:28:28.544Z",
+        "distanceValue": 2,
+        "distanceUnit": "km",
+        "expensePerUnit": 100000,
+        "totalPaid": 200000,
+        "advancePayment": 0,
+        "totalMachineRent": 0,
+        "_id": "6a1a838ca4c0851e8674025c"
+      }
+    ],
+    "createdAt": "2026-05-30T06:11:09.599Z",
+    "updatedAt": "2026-06-03T11:46:43.276Z",
+    "__v": 156,
+    "projectAssignedAt": "2026-05-30T06:28:28.584Z"
+  },
+  {
+    "_id": "6a1a9ef5a9ee0e947969d00a",
+    "name": "Parvesh",
+    "mobile": "9856325689",
+    "address": "Agra",
+    "distanceValue": 1,
+    "distanceUnit": "km",
+    "expensePerUnit": 10000,
+    "assignedProjects": [
+      "6a1a7f1eb599cda83738b859"
+    ],
+    "status": "active",
+    "pendingAmount": 8000,
+    "totalPaid": 212000,
+    "advancePayment": 0,
+    "projectHistory": [
+      {
+        "projectId": "6a1a7f1eb599cda83738b859",
+        "name": "agar",
+        "completedAt": "2026-06-03T10:05:34.499Z",
+        "distanceValue": 8,
+        "distanceUnit": "km",
+        "expensePerUnit": 1000000,
+        "totalPaid": 210000,
+        "advancePayment": 0,
+        "totalMachineRent": 0,
+        "_id": "6a1ffc6ec2bfeec029c751d7"
+      }
+    ],
+    "createdAt": "2026-05-30T08:25:25.780Z",
+    "updatedAt": "2026-06-03T11:46:43.363Z",
+    "__v": 156,
+    "projectAssignedAt": "2026-06-03T10:05:34.539Z"
+  }
+]

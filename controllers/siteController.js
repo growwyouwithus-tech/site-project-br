@@ -60,23 +60,26 @@ const markAttendance = async (req, res, next) => {
         const { projectId, date, photo, remarks } = req.body;
         const userId = req.user.userId;
 
-        // Selfie temporarily made optional for PC testing
-        let photoUrl = '';
-        if (photo && typeof photo === 'string' && photo.trim()) {
-            photoUrl = photo.trim();
-            if (photoUrl.startsWith('data:image/')) {
-                const { cloudinary } = require('../config/cloudinary');
-                const result = await cloudinary.uploader.upload(photoUrl, {
-                    folder: 'attendance',
-                    resource_type: 'image',
-                    transformation: [
-                        { width: 1200, height: 1200, crop: 'limit' },
-                        { quality: 'auto:good' },
-                        { fetch_format: 'auto' }
-                    ]
-                });
-                photoUrl = result.secure_url;
-            }
+        if (!photo || typeof photo !== 'string' || !photo.trim()) {
+            return res.status(400).json({
+                success: false,
+                error: 'Selfie photo is required to mark attendance'
+            });
+        }
+
+        let photoUrl = photo.trim();
+        if (photoUrl.startsWith('data:image/')) {
+            const { cloudinary } = require('../config/cloudinary');
+            const result = await cloudinary.uploader.upload(photoUrl, {
+                folder: 'attendance',
+                resource_type: 'image',
+                transformation: [
+                    { width: 1200, height: 1200, crop: 'limit' },
+                    { quality: 'auto:good' },
+                    { fetch_format: 'auto' }
+                ]
+            });
+            photoUrl = result.secure_url;
         }
 
         const attendance = new Attendance({
@@ -2057,6 +2060,16 @@ const getContractors = async (req, res, next) => {
         const contractors = await Contractor.find({
             assignedProjects: { $in: user.assignedSites }
         });
+        
+        // Debugging
+        const fs = require('fs');
+        fs.writeFileSync('site_contractors_debug.json', JSON.stringify({
+            userId,
+            userAssignedSites: user.assignedSites,
+            contractorsFound: contractors.length,
+            contractors
+        }, null, 2));
+
         res.json({ success: true, data: contractors });
     } catch (error) {
         next(error);
@@ -2095,6 +2108,13 @@ const payContractor = async (req, res, next) => {
             await user.save();
         }
 
+        if (!req.file) {
+            return res.status(400).json({ success: false, error: 'Payment slip / receipt image is required' });
+        }
+
+        const { uploadToCloudinary } = require('../config/cloudinary');
+        const receiptUrl = await uploadToCloudinary(req.file.buffer, 'payments');
+
         const payment = new ContractorPayment({
             contractorId,
             contractorName: contractor.name,
@@ -2106,7 +2126,8 @@ const payContractor = async (req, res, next) => {
             date: new Date(),
             paymentMode: paymentMode || 'cash',
             remark: remarks || '',
-            paidBy: userId
+            paidBy: userId,
+            receiptUrl: receiptUrl
         });
         await payment.save();
 
@@ -2115,6 +2136,7 @@ const payContractor = async (req, res, next) => {
             contractor.pendingAmount = Math.max(0, (contractor.pendingAmount || 0) - reducePending);
             if (advanceVal > 0) contractor.advancePayment = (contractor.advancePayment || 0) + advanceVal;
             if (advanceRecoveredVal > 0) contractor.advancePayment = Math.max(0, (contractor.advancePayment || 0) - advanceRecoveredVal);
+            contractor.totalPaid = (contractor.totalPaid || 0) + amountVal;
             await contractor.save();
         }
         res.json({ success: true, message: 'Payment recorded', data: payment });
@@ -2160,6 +2182,13 @@ const payVendor = async (req, res, next) => {
             await vendor.save();
         }
 
+        if (!req.file) {
+            return res.status(400).json({ success: false, error: 'Payment slip / receipt image is required' });
+        }
+
+        const { uploadToCloudinary } = require('../config/cloudinary');
+        const receiptUrl = await uploadToCloudinary(req.file.buffer, 'payments');
+
         const payment = new VendorPayment({
             vendorId,
             amount: amountVal,
@@ -2169,7 +2198,8 @@ const payVendor = async (req, res, next) => {
             date: new Date(),
             paymentMode: paymentMode || 'cash',
             remarks: remarks || '',
-            recordedBy: userId
+            recordedBy: userId,
+            receiptUrl: receiptUrl
         });
         await payment.save();
         res.json({ success: true, message: 'Payment recorded', data: payment });

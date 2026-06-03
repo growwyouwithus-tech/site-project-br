@@ -1,0 +1,100 @@
+{
+  "attendanceRecords": [
+    {
+      "_id": "6a20045226ab8fc5baa5513d",
+      "userId": {
+        "_id": "6a0fed3e5e2322f64811b798",
+        "name": "amit",
+        "email": "amit@gmail.com",
+        "role": "sitemanager"
+      },
+      "projectId": "69f0c9d5a3e692a5fd3ef2a8",
+      "date": "2026-06-03",
+      "photo": "",
+      "remarks": "",
+      "time": "2026-06-03T10:39:14.352Z",
+      "createdAt": "2026-06-03T10:39:14.353Z",
+      "updatedAt": "2026-06-03T10:39:14.353Z",
+      "__v": 0
+    },
+    {
+      "_id": "6a1ab6d4d7a43bc5256a4f12",
+      "userId": {
+        "_id": "6a0fed3e5e2322f64811b798",
+        "name": "amit",
+        "email": "amit@gmail.com",
+        "role": "sitemanager"
+      },
+      "projectId": "6a1a7f1eb599cda83738b859",
+      "date": "2026-05-30",
+      "photo": "",
+      "remarks": "",
+      "time": "2026-05-30T10:07:16.113Z",
+      "createdAt": "2026-05-30T10:07:16.117Z",
+      "updatedAt": "2026-05-30T10:07:16.117Z",
+      "__v": 0
+    }
+  ],
+  "labourAttendanceRecords": [
+    {
+      "_id": "6a1ab771d7a43bc5256a505d",
+      "labourId": {
+        "_id": "6a1ab73ad7a43bc5256a4ffc",
+        "name": "amar",
+        "designation": "Helper"
+      },
+      "labourName": "amar",
+      "projectId": {
+        "_id": "6a1a7f1eb599cda83738b859",
+        "name": "agar"
+      },
+      "date": "2026-05-30T00:00:00.000Z",
+      "status": "present",
+      "remarks": "",
+      "markedBy": "6a0fed3e5e2322f64811b798",
+      "createdAt": "2026-05-30T10:09:53.907Z",
+      "updatedAt": "2026-05-30T10:09:53.907Z",
+      "__v": 0
+    },
+    {
+      "_id": "6a1ab776d7a43bc5256a5062",
+      "labourId": {
+        "_id": "6a1ab74dd7a43bc5256a5007",
+        "name": "ravi",
+        "designation": "Helper"
+      },
+      "labourName": "ravi",
+      "projectId": {
+        "_id": "6a1a7f1eb599cda83738b859",
+        "name": "agar"
+      },
+      "date": "2026-05-30T00:00:00.000Z",
+      "status": "present",
+      "remarks": "",
+      "markedBy": "6a0fed3e5e2322f64811b798",
+      "createdAt": "2026-05-30T10:09:58.143Z",
+      "updatedAt": "2026-05-30T10:09:58.143Z",
+      "__v": 0
+    }
+  ],
+  "usersList": [
+    {
+      "_id": "6943c7502482ef3fccb35d1e",
+      "name": "Admin",
+      "email": "admin@construction.com",
+      "role": "admin"
+    },
+    {
+      "_id": "69e839bfda093e42f0a0de0c",
+      "name": "ankit",
+      "email": "ankit@gmail.com",
+      "role": "sitemanager"
+    },
+    {
+      "_id": "6a0fed3e5e2322f64811b798",
+      "name": "amit",
+      "email": "amit@gmail.com",
+      "role": "sitemanager"
+    }
+  ]
+}

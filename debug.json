@@ -1,0 +1,96 @@
+{
+  "contractor": {
+    "_id": "6a1a9ef5a9ee0e947969d00a",
+    "name": "Parvesh",
+    "mobile": "9856325689",
+    "address": "Agra",
+    "distanceValue": 1,
+    "distanceUnit": "km",
+    "expensePerUnit": 10000,
+    "assignedProjects": [
+      "6a1a7f1eb599cda83738b859"
+    ],
+    "status": "active",
+    "pendingAmount": 10000,
+    "totalPaid": 0,
+    "advancePayment": 0,
+    "projectHistory": [
+      {
+        "projectId": "6a1a7f1eb599cda83738b859",
+        "name": "agar",
+        "completedAt": "2026-06-03T10:05:34.499Z",
+        "distanceValue": 8,
+        "distanceUnit": "km",
+        "expensePerUnit": 1000000,
+        "totalPaid": 160000,
+        "advancePayment": 0,
+        "totalMachineRent": 0,
+        "_id": "6a1ffc6ec2bfeec029c751d7"
+      }
+    ],
+    "createdAt": "2026-05-30T08:25:25.780Z",
+    "updatedAt": "2026-06-03T10:33:31.718Z",
+    "__v": 155,
+    "projectAssignedAt": "2026-06-03T10:05:34.539Z"
+  },
+  "payments": [
+    {
+      "_id": "6a1a9f2686e2ddd5564eedb5",
+      "contractorId": "6a1a9ef5a9ee0e947969d00a",
+      "contractorName": "Parvesh",
+      "projectId": "6a1a7f1eb599cda83738b859",
+      "date": "2026-05-30T08:25:00.000Z",
+      "amount": 80000,
+      "advance": 0,
+      "deduction": 0,
+      "advanceRecovered": 0,
+      "paymentMode": "online",
+      "bankId": "6a1a80dab599cda83738b8e8",
+      "creditorId": "6a1a803bb599cda83738b8c2",
+      "remark": "",
+      "machineRent": 0,
+      "isAdvance": false,
+      "receiptUrl": "https://res.cloudinary.com/dnngufjrj/image/upload/v1780129574/payments/q3wrnxpuyvzmbtubihz5.jpg",
+      "createdAt": "2026-05-30T08:26:14.619Z",
+      "updatedAt": "2026-05-30T08:26:14.619Z",
+      "__v": 0
+    },
+    {
+      "_id": "6a1ffef343012c85035c5e10",
+      "contractorId": "6a1a9ef5a9ee0e947969d00a",
+      "contractorName": "Parvesh",
+      "projectId": "6a1ffc6ec2bfeec029c751d7",
+      "date": "2026-06-03T10:15:00.000Z",
+      "amount": 80000,
+      "advance": 0,
+      "deduction": 0,
+      "advanceRecovered": 0,
+      "paymentMode": "online",
+      "bankId": "6a1a80dab599cda83738b8e8",
+      "remark": "",
+      "machineRent": 0,
+      "isAdvance": false,
+      "receiptUrl": "https://res.cloudinary.com/dnngufjrj/image/upload/v1780481821/payments/rg21ljvbz0maxdytxdi0.png",
+      "createdAt": "2026-06-03T10:16:19.374Z",
+      "updatedAt": "2026-06-03T10:16:19.374Z",
+      "__v": 0
+    }
+  ],
+  "projects": [
+    {
+      "_id": "6a1a7f1eb599cda83738b859",
+      "name": "agar",
+      "location": "bodla road",
+      "startDate": "2026-05-30T00:00:00.000Z",
+      "endDate": "2026-06-30T00:00:00.000Z",
+      "status": "running",
+      "budget": 10000000,
+      "expenses": 0,
+      "roadDistanceValue": 8,
+      "roadDistanceUnit": "km",
+      "createdAt": "2026-05-30T06:09:34.356Z",
+      "updatedAt": "2026-05-30T06:09:34.356Z",
+      "__v": 0
+    }
+  ]
+}

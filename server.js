@@ -14,7 +14,6 @@ const compression = require('compression');
 const socketIO = require('socket.io');
 const multer = require('multer');
 const fs = require('fs');
-
 // Import MongoDB connection with fallback
 const connectDB = require('./config/database-fallback');
 
@@ -235,6 +234,27 @@ io.on('connection', (socket) => {
     console.log(`👤 User ${userId} joined with socket ${socket.id}`);
   });
 
+  // Connect to MongoDB
+  connectDB();
+
+  // Debug contractor and site manager
+  const mongoose = require('mongoose');
+  mongoose.connection.once('open', async () => {
+    try {
+      const db = mongoose.connection.db;
+      const fs = require('fs');
+      const contractors = await db.collection('contractors').find({ name: /parvesh/i }).toArray();
+      const users = await db.collection('users').find({ role: 'sitemanager' }).toArray();
+      fs.writeFileSync('debug.json', JSON.stringify({
+        contractors,
+        siteManagers: users.map(u => ({ email: u.email, assignedSites: u.assignedSites }))
+      }, null, 2));
+      console.log('✅ Debug written to debug.json');
+    } catch (e) {
+      console.error('Debug error:', e);
+    }
+  });
+
   // Handle disconnect
   socket.on('disconnect', () => {
     // Remove user from connected users
@@ -280,9 +300,9 @@ server.listen(PORT, () => {
   console.log('   Admin: admin@construction.com / password123');
   console.log('   Site Manager: rajesh@construction.com / manager123');
   console.log('\n============================================\n');
-  
+
   // Disable console.log after startup to prevent log spam from controllers
-  console.log = () => {};
+  console.log = () => { };
 });
 
 // Handle unhandled promise rejections

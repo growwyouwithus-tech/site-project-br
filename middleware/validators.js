@@ -97,9 +97,8 @@ const attendanceValidation = [
   body('date').isISO8601().withMessage('Valid date is required'),
   body('projectId').notEmpty().withMessage('Project is required'),
   body('photo')
-    .optional()
+    .notEmpty().withMessage('Selfie photo is required')
     .custom((value) => {
-      if (!value) return true;
       if (typeof value !== 'string' || !value.trim()) return false;
       if (value.startsWith('data:image/')) return true;
       if (value.startsWith('http://') || value.startsWith('https://')) return true;

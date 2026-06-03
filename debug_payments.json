@@ -1,0 +1,66 @@
+[
+  {
+    "contractor": "arun",
+    "count": 2,
+    "sumAmount": 275000,
+    "sumAdvance": 0,
+    "payments": [
+      {
+        "id": "6a1a8348a4c0851e8674021c",
+        "amount": 200000,
+        "advance": 0,
+        "isAdvance": false,
+        "date": "2026-05-30T06:24:00.000Z",
+        "createdAt": "2026-05-30T06:27:20.133Z"
+      },
+      {
+        "id": "6a1ff50e5ebdb0b63acf60ff",
+        "amount": 75000,
+        "advance": 0,
+        "isAdvance": false,
+        "date": "2026-06-03T09:33:00.000Z",
+        "createdAt": "2026-06-03T09:34:06.414Z"
+      }
+    ]
+  },
+  {
+    "contractor": "Parvesh",
+    "count": 4,
+    "sumAmount": 212000,
+    "sumAdvance": 0,
+    "payments": [
+      {
+        "id": "6a1a9f2686e2ddd5564eedb5",
+        "amount": 80000,
+        "advance": 0,
+        "isAdvance": false,
+        "date": "2026-05-30T08:25:00.000Z",
+        "createdAt": "2026-05-30T08:26:14.619Z"
+      },
+      {
+        "id": "6a1ffef343012c85035c5e10",
+        "amount": 80000,
+        "advance": 0,
+        "isAdvance": false,
+        "date": "2026-06-03T10:15:00.000Z",
+        "createdAt": "2026-06-03T10:16:19.374Z"
+      },
+      {
+        "id": "6a20038126ab8fc5baa5507b",
+        "amount": 50000,
+        "advance": 0,
+        "isAdvance": false,
+        "date": "2026-06-03T10:35:00.000Z",
+        "createdAt": "2026-06-03T10:35:45.649Z"
+      },
+      {
+        "id": "6a20118d9a20787a3e9620c2",
+        "amount": 2000,
+        "advance": 0,
+        "isAdvance": false,
+        "date": "2026-06-03T11:35:41.792Z",
+        "createdAt": "2026-06-03T11:35:41.793Z"
+      }
+    ]
+  }
+]
