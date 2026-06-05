@@ -16,8 +16,7 @@ const contractorSchema = new mongoose.Schema({
         required: true
     },
     distanceValue: {
-        type: Number,
-        required: true
+        type: Number
     },
     distanceUnit: {
         type: String,
@@ -25,12 +24,20 @@ const contractorSchema = new mongoose.Schema({
         default: 'km'
     },
     expensePerUnit: {
-        type: Number,
-        required: true
+        type: Number
     },
     assignedProjects: [{
         type: mongoose.Schema.Types.ObjectId,
         ref: 'Project'
+    }],
+    activeAssignments: [{
+        projectId: { type: mongoose.Schema.Types.ObjectId, ref: 'Project' },
+        assignedAt: { type: Date, default: Date.now },
+        distanceValue: { type: Number, default: 0 },
+        distanceUnit: { type: String, default: 'km' },
+        expensePerUnit: { type: Number, default: 0 },
+        totalPaid: { type: Number, default: 0 },
+        advancePayment: { type: Number, default: 0 }
     }],
     projectAssignedAt: {
         type: Date
@@ -49,6 +56,10 @@ const contractorSchema = new mongoose.Schema({
         default: 0
     },
     advancePayment: {
+        type: Number,
+        default: 0
+    },
+    capitalProvided: {
         type: Number,
         default: 0
     },

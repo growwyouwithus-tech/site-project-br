@@ -54,6 +54,10 @@ const transactionSchema = new mongoose.Schema({
         type: mongoose.Schema.Types.ObjectId,
         ref: 'Creditor'
     },
+    contractorId: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'Contractor'
+    },
     projectId: {
         type: mongoose.Schema.Types.ObjectId,
         ref: 'Project'

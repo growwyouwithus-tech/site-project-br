@@ -2133,10 +2133,33 @@ const payContractor = async (req, res, next) => {
 
         if (amountVal > 0 || deductionVal > 0 || advanceVal > 0 || advanceRecoveredVal > 0) {
             const reducePending = amountVal + deductionVal + advanceRecoveredVal;
-            contractor.pendingAmount = Math.max(0, (contractor.pendingAmount || 0) - reducePending);
-            if (advanceVal > 0) contractor.advancePayment = (contractor.advancePayment || 0) + advanceVal;
-            if (advanceRecoveredVal > 0) contractor.advancePayment = Math.max(0, (contractor.advancePayment || 0) - advanceRecoveredVal);
-            contractor.totalPaid = (contractor.totalPaid || 0) + amountVal;
+
+            if (projectId) {
+                const assignmentIndex = contractor.activeAssignments.findIndex(a => a.projectId && a.projectId.toString() === projectId.toString());
+                if (assignmentIndex !== -1) {
+                    const assignment = contractor.activeAssignments[assignmentIndex];
+                    assignment.pendingAmount = Math.max(0, (assignment.pendingAmount || 0) - reducePending);
+                    if (advanceVal > 0) assignment.advancePayment = (assignment.advancePayment || 0) + advanceVal;
+                    if (advanceRecoveredVal > 0) assignment.advancePayment = Math.max(0, (assignment.advancePayment || 0) - advanceRecoveredVal);
+                    assignment.totalPaid = (assignment.totalPaid || 0) + amountVal;
+
+                    if (assignmentIndex === 0) {
+                        contractor.pendingAmount = assignment.pendingAmount;
+                        contractor.advancePayment = assignment.advancePayment;
+                        contractor.totalPaid = assignment.totalPaid;
+                    }
+                } else {
+                    contractor.pendingAmount = Math.max(0, (contractor.pendingAmount || 0) - reducePending);
+                    if (advanceVal > 0) contractor.advancePayment = (contractor.advancePayment || 0) + advanceVal;
+                    if (advanceRecoveredVal > 0) contractor.advancePayment = Math.max(0, (contractor.advancePayment || 0) - advanceRecoveredVal);
+                    contractor.totalPaid = (contractor.totalPaid || 0) + amountVal;
+                }
+            } else {
+                contractor.pendingAmount = Math.max(0, (contractor.pendingAmount || 0) - reducePending);
+                if (advanceVal > 0) contractor.advancePayment = (contractor.advancePayment || 0) + advanceVal;
+                if (advanceRecoveredVal > 0) contractor.advancePayment = Math.max(0, (contractor.advancePayment || 0) - advanceRecoveredVal);
+                contractor.totalPaid = (contractor.totalPaid || 0) + amountVal;
+            }
             await contractor.save();
         }
         res.json({ success: true, message: 'Payment recorded', data: payment });
@@ -2421,6 +2444,15 @@ const addContractor = async (req, res, next) => {
             // If exists, just ensure project is assigned
             if (!contractor.assignedProjects.includes(assignedProjectId)) {
                 contractor.assignedProjects.push(assignedProjectId);
+                contractor.activeAssignments.push({
+                    projectId: assignedProjectId,
+                    assignedAt: new Date(),
+                    distanceValue: distanceValue || 0,
+                    distanceUnit: distanceUnit || 'km',
+                    expensePerUnit: expensePerUnit || 0,
+                    totalPaid: 0,
+                    advancePayment: 0
+                });
                 await contractor.save();
             }
             return res.json({ success: true, message: 'Existing contractor assigned to project', data: contractor });
@@ -2434,7 +2466,16 @@ const addContractor = async (req, res, next) => {
             distanceValue,
             distanceUnit,
             expensePerUnit,
-            assignedProjects: [assignedProjectId],
+            assignedProjects: assignedProjectId ? [assignedProjectId] : [],
+            activeAssignments: assignedProjectId ? [{
+                projectId: assignedProjectId,
+                assignedAt: new Date(),
+                distanceValue: distanceValue || 0,
+                distanceUnit: distanceUnit || 'km',
+                expensePerUnit: expensePerUnit || 0,
+                totalPaid: 0,
+                advancePayment: 0
+            }] : [],
             status: 'active'
         });
 

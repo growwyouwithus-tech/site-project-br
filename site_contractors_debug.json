@@ -1,80 +1,57 @@
 {
-  "userId": "6a0fed3e5e2322f64811b798",
+  "userId": "6a226f267474f0bd65be8084",
   "userAssignedSites": [
-    "69f09a94060cce03fa8898e0",
-    "69f0c9d5a3e692a5fd3ef2a8",
-    "6a0fe8a38c9e0a499116a371",
-    "6a1a7f1eb599cda83738b859"
+    "6a226c207474f0bd65be7fc1",
+    "6a2278dd7474f0bd65be83c1"
   ],
-  "contractorsFound": 2,
+  "contractorsFound": 1,
   "contractors": [
     {
-      "_id": "6a1a7f7db599cda83738b880",
-      "name": "arun",
-      "mobile": "7845129856",
-      "address": "shikandra agra",
-      "distanceValue": 5,
-      "distanceUnit": "km",
-      "expensePerUnit": 15000,
-      "assignedProjects": [
-        "6a1a7f1eb599cda83738b859"
-      ],
-      "status": "inactive",
-      "pendingAmount": 0,
-      "totalPaid": 75000,
-      "advancePayment": 0,
-      "projectHistory": [
-        {
-          "projectId": "6a1a7f1eb599cda83738b859",
-          "name": "agar",
-          "completedAt": "2026-05-30T06:28:28.544Z",
-          "distanceValue": 2,
-          "distanceUnit": "km",
-          "expensePerUnit": 100000,
-          "totalPaid": 200000,
-          "advancePayment": 0,
-          "totalMachineRent": 0,
-          "_id": "6a1a838ca4c0851e8674025c"
-        }
-      ],
-      "createdAt": "2026-05-30T06:11:09.599Z",
-      "updatedAt": "2026-06-03T11:50:59.595Z",
-      "__v": 156,
-      "projectAssignedAt": "2026-05-30T06:28:28.584Z"
-    },
-    {
-      "_id": "6a1a9ef5a9ee0e947969d00a",
-      "name": "Parvesh",
-      "mobile": "9856325689",
-      "address": "Agra",
+      "_id": "6a226d6a7474f0bd65be7fee",
+      "name": "aman",
+      "mobile": "9865328745",
+      "address": "hathrash",
       "distanceValue": 1,
       "distanceUnit": "km",
-      "expensePerUnit": 10000,
+      "expensePerUnit": 30000,
       "assignedProjects": [
-        "6a1a7f1eb599cda83738b859"
+        "6a226c207474f0bd65be7fc1"
       ],
       "status": "active",
-      "pendingAmount": 6000,
-      "totalPaid": 4000,
+      "pendingAmount": -200000,
+      "totalPaid": 0,
       "advancePayment": 0,
       "projectHistory": [
         {
-          "projectId": "6a1a7f1eb599cda83738b859",
-          "name": "agar",
-          "completedAt": "2026-06-03T10:05:34.499Z",
-          "distanceValue": 8,
+          "projectId": "6a226c207474f0bd65be7fc1",
+          "name": "agra project",
+          "completedAt": "2026-06-05T06:34:22.429Z",
+          "distanceValue": 2,
           "distanceUnit": "km",
-          "expensePerUnit": 1000000,
-          "totalPaid": 210000,
+          "expensePerUnit": 10000,
+          "totalPaid": 0,
           "advancePayment": 0,
           "totalMachineRent": 0,
-          "_id": "6a1ffc6ec2bfeec029c751d7"
+          "_id": "6a226dee7474f0bd65be7ff9"
+        },
+        {
+          "projectId": "6a226c207474f0bd65be7fc1",
+          "name": "agra project",
+          "assignedAt": "2026-06-05T06:34:22.472Z",
+          "completedAt": "2026-06-05T06:35:41.710Z",
+          "distanceValue": 2,
+          "distanceUnit": "km",
+          "expensePerUnit": 20000,
+          "totalPaid": 20000,
+          "advancePayment": 0,
+          "totalMachineRent": 0,
+          "_id": "6a226e3d7474f0bd65be800a"
         }
       ],
-      "createdAt": "2026-05-30T08:25:25.780Z",
-      "updatedAt": "2026-06-03T12:14:24.937Z",
-      "__v": 156,
-      "projectAssignedAt": "2026-06-03T10:05:34.539Z"
+      "createdAt": "2026-06-05T06:32:10.262Z",
+      "updatedAt": "2026-06-05T07:30:27.408Z",
+      "__v": 3,
+      "projectAssignedAt": "2026-06-05T06:35:41.751Z"
     }
   ]
 }

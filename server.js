@@ -213,6 +213,52 @@ app.use('/api/auth', authRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/site', siteRoutes);
 
+// Migration Route
+app.get('/api/migrate', async (req, res) => {
+  try {
+    const Contractor = require('./models/Contractor');
+    const contractors = await Contractor.find({});
+    let count = 0;
+    for (const contractor of contractors) {
+        if (contractor.activeAssignments.length === 0 && contractor.assignedProjects && contractor.assignedProjects.length > 0) {
+            const legacyDistance = contractor.distanceValue || 0;
+            const legacyUnit = contractor.distanceUnit || 'km';
+            const legacyExpense = contractor.expensePerUnit || 0;
+            const legacyTotalPaid = contractor.totalPaid || 0;
+            const legacyAdvance = contractor.advancePayment || 0;
+            const legacyAssignedAt = contractor.projectAssignedAt || contractor.createdAt;
+
+            contractor.activeAssignments.push({
+                projectId: contractor.assignedProjects[0],
+                assignedAt: legacyAssignedAt,
+                distanceValue: legacyDistance,
+                distanceUnit: legacyUnit,
+                expensePerUnit: legacyExpense,
+                totalPaid: legacyTotalPaid,
+                advancePayment: legacyAdvance
+            });
+
+            for (let i = 1; i < contractor.assignedProjects.length; i++) {
+                contractor.activeAssignments.push({
+                    projectId: contractor.assignedProjects[i],
+                    assignedAt: legacyAssignedAt,
+                    distanceValue: 0,
+                    distanceUnit: 'km',
+                    expensePerUnit: 0,
+                    totalPaid: 0,
+                    advancePayment: 0
+                });
+            }
+            await contractor.save();
+            count++;
+        }
+    }
+    res.json({ migrated: count });
+  } catch(err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // 404 handler
 app.use(notFoundHandler);
 
@@ -282,27 +328,30 @@ io.on('connection', (socket) => {
 
 const PORT = process.env.PORT || 5000;
 
-server.listen(PORT, () => {
-  console.log('\n🚀 ============================================');
-  console.log(`🚀 Server running on port ${PORT}`);
-  console.log(`🚀 Environment: ${process.env.NODE_ENV || 'development'}`);
-  console.log('🚀 ============================================');
-  console.log('\n✅ Using MongoDB for persistent storage!');
-  console.log('✅ Data will be saved permanently in database.\n');
-  console.log('📌 API Endpoints:');
-  console.log(`   - Health: http://localhost:${PORT}/api/health`);
-  console.log(`   - Auth: http://localhost:${PORT}/api/auth/*`);
-  console.log(`   - Admin: http://localhost:${PORT}/api/admin/*`);
-  console.log(`   - Site Manager: http://localhost:${PORT}/api/site/*`);
-  console.log(`   - File Upload: http://localhost:${PORT}/api/upload`);
-  console.log(`   - Static Files: http://localhost:${PORT}/uploads/*`);
-  console.log('\n🔐 Default Credentials:');
-  console.log('   Admin: admin@construction.com / password123');
-  console.log('   Site Manager: rajesh@construction.com / manager123');
-  console.log('\n============================================\n');
+// Connect to MongoDB
+connectDB().then(() => {
+  server.listen(PORT, () => {
+    console.log('\n🚀 ============================================');
+    console.log(`🚀 Server running on port ${PORT}`);
+    console.log(`🚀 Environment: ${process.env.NODE_ENV || 'development'}`);
+    console.log('🚀 ============================================');
+    console.log('\n✅ Using MongoDB for persistent storage!');
+    console.log('✅ Data will be saved permanently in database.\n');
+    console.log('📌 API Endpoints:');
+    console.log(`   - Health: http://localhost:${PORT}/api/health`);
+    console.log(`   - Auth: http://localhost:${PORT}/api/auth/*`);
+    console.log(`   - Admin: http://localhost:${PORT}/api/admin/*`);
+    console.log(`   - Site Manager: http://localhost:${PORT}/api/site/*`);
+    console.log(`   - File Upload: http://localhost:${PORT}/api/upload`);
+    console.log(`   - Static Files: http://localhost:${PORT}/uploads/*`);
+    console.log('\n🔐 Default Credentials:');
+    console.log('   Admin: admin@construction.com / password123');
+    console.log('   Site Manager: rajesh@construction.com / manager123');
+    console.log('\n============================================\n');
 
-  // Disable console.log after startup to prevent log spam from controllers
-  console.log = () => { };
+    // Disable console.log after startup to prevent log spam from controllers
+    console.log = () => { };
+  });
 });
 
 // Handle unhandled promise rejections

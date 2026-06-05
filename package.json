@@ -5,6 +5,7 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
+    "migrate": "node scripts/migrateContractors.js",
     "dev": "nodemon server.js",
     "seed": "node scripts/seedDatabase.js",
     "setup-local-db": "node scripts/setup-local-mongodb.js",

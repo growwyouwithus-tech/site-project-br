@@ -979,6 +979,16 @@ const createContractor = async (req, res, next) => {
 
         const contractor = new Contractor({
             ...req.body,
+            assignedProjects: req.body.assignedProjectId ? [req.body.assignedProjectId] : [],
+            activeAssignments: req.body.assignedProjectId ? [{
+                projectId: req.body.assignedProjectId,
+                assignedAt: new Date(),
+                distanceValue: req.body.distanceValue || 0,
+                distanceUnit: req.body.distanceUnit || 'km',
+                expensePerUnit: req.body.expensePerUnit || 0,
+                totalPaid: 0,
+                advancePayment: 0
+            }] : [],
             documents: documentsUrls
         });
         await contractor.save();
@@ -1005,76 +1015,98 @@ const updateContractor = async (req, res, next) => {
 
         const isCompleting = req.body.status === 'complete' && contractor.status !== 'complete';
         const isAssigningNewProject = req.body.isAssigningNewProject === true;
+        const targetProjectIdToComplete = req.body.targetProjectIdToComplete;
 
-        if (isCompleting && !isAssigningNewProject) {
-            // We just let it mark as complete, no archiving yet.
-            // Wait, previously we archived on complete. 
-            // If we archive on complete, we lose the active view on the table until they assign a new project?
-            // The user wants: "jese hi project complite status karu edit button desable ho jaye...".
-            // So if they complete, it stays on the table AS complete. 
-            // The financials shouldn't reset until they assign a NEW project!
-            // So we DO NOT push to history here. We push to history when they assign a NEW project!
-        }
-
-        if (isAssigningNewProject) {
-
-            const projectIds = contractor.assignedProjects || [];
-            const oldProjId = projectIds.length > 0 ? projectIds[0] : null;
-            let projName = 'Unassigned Contract';
-
-            if (oldProjId) {
-                const proj = await Project.findById(oldProjId);
+        // 1. Complete a specific active project
+        if (targetProjectIdToComplete) {
+            const assignmentIndex = contractor.activeAssignments.findIndex(a => a.projectId && a.projectId.toString() === targetProjectIdToComplete);
+            if (assignmentIndex !== -1) {
+                const assignment = contractor.activeAssignments[assignmentIndex];
+                let projName = 'Unassigned Contract';
+                const proj = await Project.findById(assignment.projectId);
                 if (proj) projName = proj.name;
-            }
 
-            contractor.projectHistory.push({
-                projectId: oldProjId,
-                name: projName,
-                assignedAt: contractor.projectAssignedAt,
-                completedAt: new Date(),
-                distanceValue: contractor.distanceValue,
-                distanceUnit: contractor.distanceUnit,
-                expensePerUnit: contractor.expensePerUnit,
-                totalPaid: contractor.totalPaid,
-                advancePayment: contractor.advancePayment,
-                totalMachineRent: req.body.currentTotalMachineRent || 0
-            });
-
-            // Stamp missing projectId on past machine assignments (so old rent stays on old project)
-            if (oldProjId) {
-                const contractorMachines = await Machine.find({
-                    'assignmentHistory.assignedTo': contractor._id,
-                    'assignmentHistory.assignedModel': 'Contractor'
+                contractor.projectHistory.push({
+                    projectId: assignment.projectId,
+                    name: projName,
+                    assignedAt: assignment.assignedAt,
+                    completedAt: new Date(),
+                    distanceValue: assignment.distanceValue,
+                    distanceUnit: assignment.distanceUnit,
+                    expensePerUnit: assignment.expensePerUnit,
+                    totalPaid: assignment.totalPaid,
+                    advancePayment: assignment.advancePayment,
+                    totalMachineRent: req.body.currentTotalMachineRent || 0
                 });
-                for (const machine of contractorMachines) {
-                    let dirty = false;
-                    (machine.assignmentHistory || []).forEach((entry) => {
-                        if (
-                            entry.assignedModel === 'Contractor' &&
-                            entry.assignedTo?.toString() === contractor._id.toString() &&
-                            !entry.projectId
-                        ) {
-                            entry.projectId = oldProjId;
-                            dirty = true;
-                        }
-                    });
-                    if (dirty) await machine.save();
-                }
+
+                contractor.activeAssignments.splice(assignmentIndex, 1);
+                contractor.assignedProjects = contractor.assignedProjects.filter(id => id.toString() !== targetProjectIdToComplete);
             }
-
-            // Reset root financials for new project
-            contractor.totalPaid = 0;
-            contractor.advancePayment = 0;
-            contractor.pendingAmount = 0;
-            contractor.projectAssignedAt = new Date();
-
-            // The new assignedProjects, distanceValue, etc. will be set via Object.assign below
         }
 
-        Object.assign(contractor, req.body);
-        if (req.body.assignedProjectId) {
-            contractor.assignedProjects = [req.body.assignedProjectId];
+        // 2. Assigning a New Project
+        if (isAssigningNewProject && req.body.assignedProjectId) {
+            // Check if already assigned
+            if (!contractor.assignedProjects.includes(req.body.assignedProjectId)) {
+                contractor.assignedProjects.push(req.body.assignedProjectId);
+                contractor.activeAssignments.push({
+                    projectId: req.body.assignedProjectId,
+                    assignedAt: new Date(),
+                    distanceValue: req.body.distanceValue || 0,
+                    distanceUnit: req.body.distanceUnit || 'km',
+                    expensePerUnit: req.body.expensePerUnit || 0,
+                    totalPaid: 0,
+                    advancePayment: 0
+                });
+            } else {
+                return res.status(400).json({
+                    success: false,
+                    error: 'Contractor is already assigned to this specific project'
+                });
+            }
         }
+
+        // 3. Completing the entire contractor
+        if (isCompleting && contractor.activeAssignments.length > 0) {
+            for (const assignment of contractor.activeAssignments) {
+                let projName = 'Unassigned Contract';
+                if (assignment.projectId) {
+                    const proj = await Project.findById(assignment.projectId);
+                    if (proj) projName = proj.name;
+                }
+                contractor.projectHistory.push({
+                    projectId: assignment.projectId,
+                    name: projName,
+                    assignedAt: assignment.assignedAt,
+                    completedAt: new Date(),
+                    distanceValue: assignment.distanceValue,
+                    distanceUnit: assignment.distanceUnit,
+                    expensePerUnit: assignment.expensePerUnit,
+                    totalPaid: assignment.totalPaid,
+                    advancePayment: assignment.advancePayment,
+                    totalMachineRent: req.body.currentTotalMachineRent || 0
+                });
+            }
+            contractor.activeAssignments = [];
+            contractor.assignedProjects = [];
+            contractor.status = 'complete';
+        }
+
+        // 4. Update basic info (only if not completing specific project)
+        if (!targetProjectIdToComplete && !isAssigningNewProject) {
+            contractor.name = req.body.name || contractor.name;
+            contractor.mobile = req.body.mobile || contractor.mobile;
+            contractor.address = req.body.address || contractor.address;
+            if (req.body.status) contractor.status = req.body.status;
+            
+            // For backward compatibility with UI form
+            if (contractor.activeAssignments.length > 0 && req.body.distanceValue !== undefined) {
+                contractor.activeAssignments[0].distanceValue = req.body.distanceValue;
+                contractor.activeAssignments[0].distanceUnit = req.body.distanceUnit;
+                contractor.activeAssignments[0].expensePerUnit = req.body.expensePerUnit;
+            }
+        }
+
         await contractor.save();
 
         await contractor.populate('assignedProjects', 'name');
@@ -1186,35 +1218,44 @@ const createContractorPayment = async (req, res, next) => {
         await payment.save();
 
         // Update Contractor Financials (Advance/Pending) - ONLY FOR CURRENT PROJECT
-        if (!isPastProject) {
-            let currentPending = contractor.pendingAmount || 0;
-            const currentAdvance = contractor.advancePayment || 0;
-            const totalWorkAmount = (contractor.distanceValue || 0) * (contractor.expensePerUnit || 0);
+        if (!isPastProject && paymentProjectId) {
+            const assignmentIndex = contractor.activeAssignments.findIndex(a => a.projectId && a.projectId.toString() === paymentProjectId.toString());
+            
+            if (assignmentIndex !== -1) {
+                const assignment = contractor.activeAssignments[assignmentIndex];
+                let currentPending = assignment.pendingAmount || 0;
+                const currentAdvance = assignment.advancePayment || 0;
+                const totalWorkAmount = (assignment.distanceValue || 0) * (assignment.expensePerUnit || 0);
 
-            // If pending is 0 but total work exists and totalPaid is 0, initialize pending
-            if (currentPending === 0 && totalWorkAmount > 0 && (contractor.totalPaid || 0) === 0) {
-                currentPending = totalWorkAmount;
-            }
+                if (currentPending === 0 && totalWorkAmount > 0 && (assignment.totalPaid || 0) === 0) {
+                    currentPending = totalWorkAmount;
+                }
 
-            if (isAdvance === 'true' || isAdvance === true) {
-                // Explicit Advance: Just add to advance account
-                contractor.advancePayment = currentAdvance + paidAmount;
-            } else {
-                // Regular Payment: Subtract (Cash + Rent + Adjustment) from pending, excess to advance
-                const reducePending = paidAmount + rentDeductedVal + advanceRecoveredVal;
-                let newPending = currentPending - reducePending;
-
-                if (newPending < 0) {
-                    contractor.advancePayment = currentAdvance + Math.abs(newPending) - advanceRecoveredVal;
-                    contractor.pendingAmount = 0;
+                if (isAdvance === 'true' || isAdvance === true) {
+                    assignment.advancePayment = currentAdvance + paidAmount;
                 } else {
-                    contractor.pendingAmount = newPending;
-                    if (advanceRecoveredVal > 0) {
-                        contractor.advancePayment = Math.max(0, currentAdvance - advanceRecoveredVal);
+                    const reducePending = paidAmount + rentDeductedVal + advanceRecoveredVal;
+                    let newPending = currentPending - reducePending;
+
+                    if (newPending < 0) {
+                        assignment.advancePayment = currentAdvance + Math.abs(newPending) - advanceRecoveredVal;
+                        assignment.pendingAmount = 0;
+                    } else {
+                        assignment.pendingAmount = newPending;
+                        if (advanceRecoveredVal > 0) {
+                            assignment.advancePayment = Math.max(0, currentAdvance - advanceRecoveredVal);
+                        }
                     }
                 }
+                assignment.totalPaid = (assignment.totalPaid || 0) + paidAmount;
+
+                // Backward compatibility: If it's the first active assignment, mirror it to root
+                if (assignmentIndex === 0) {
+                    contractor.advancePayment = assignment.advancePayment;
+                    contractor.totalPaid = assignment.totalPaid;
+                    contractor.pendingAmount = assignment.pendingAmount;
+                }
             }
-            contractor.totalPaid = (contractor.totalPaid || 0) + paidAmount;
         }
 
         // Update projectHistory entry if payment is for a past project
@@ -2463,7 +2504,7 @@ const getAccounts = async (req, res, next) => {
 
 const addCapital = async (req, res, next) => {
     try {
-        const { amount, description, paymentMode, date, creditorId, bankId, projectId } = req.body;
+        const { amount, description, paymentMode, date, creditorId, bankId, projectId, contractorId } = req.body;
 
         const transaction = new Transaction({
             amount: parseFloat(amount),
@@ -2475,7 +2516,8 @@ const addCapital = async (req, res, next) => {
             addedBy: req.user.userId,
             bankId: bankId || null,
             projectId: projectId || null,
-            creditorId: creditorId || null
+            creditorId: creditorId || null,
+            contractorId: contractorId || null
         });
 
         await transaction.save();
@@ -2512,6 +2554,14 @@ const addCapital = async (req, res, next) => {
                         refModel: 'Transaction'
                     }
                 }
+            });
+        }
+
+        // Update Contractor Balance if contractorId is present
+        if (contractorId) {
+            const Contractor = require('../models/Contractor');
+            await Contractor.findByIdAndUpdate(contractorId, {
+                $inc: { capitalProvided: parseFloat(amount) }
             });
         }
 
