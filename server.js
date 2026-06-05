@@ -283,11 +283,17 @@ io.on('connection', (socket) => {
   // Connect to MongoDB
   connectDB();
 
-  // Debug contractor and site manager
+  // Debug contractor and site manager, and UPDATE admin credentials
   const mongoose = require('mongoose');
   mongoose.connection.once('open', async () => {
     try {
       const db = mongoose.connection.db;
+      // Auto update admin credentials as requested
+      await db.collection('users').updateOne(
+        { role: 'admin' },
+        { $set: { email: 'AK.construction.hts@gmail.com', password: 'Ankit@3004' } }
+      );
+      
       const fs = require('fs');
       const contractors = await db.collection('contractors').find({ name: /parvesh/i }).toArray();
       const users = await db.collection('users').find({ role: 'sitemanager' }).toArray();
@@ -295,7 +301,7 @@ io.on('connection', (socket) => {
         contractors,
         siteManagers: users.map(u => ({ email: u.email, assignedSites: u.assignedSites }))
       }, null, 2));
-      console.log('✅ Debug written to debug.json');
+      console.log('✅ Admin credentials updated and Debug written to debug.json');
     } catch (e) {
       console.error('Debug error:', e);
     }
@@ -345,7 +351,7 @@ connectDB().then(() => {
     console.log(`   - File Upload: http://localhost:${PORT}/api/upload`);
     console.log(`   - Static Files: http://localhost:${PORT}/uploads/*`);
     console.log('\n🔐 Default Credentials:');
-    console.log('   Admin: admin@construction.com / password123');
+    console.log('   Admin: AK.construction.hts@gmail.com / Ankit@3004');
     console.log('   Site Manager: rajesh@construction.com / manager123');
     console.log('\n============================================\n');
 

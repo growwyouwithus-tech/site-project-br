@@ -7,7 +7,7 @@ const { Todo, Project } = require('../models');
  */
 exports.createTodo = async (req, res) => {
     try {
-        const { task, priority, dueDate } = req.body;
+        const { task, priority, dueDate, remark } = req.body;
         const { projectId } = req.params;
 
         const project = await Project.findById(projectId);
@@ -19,6 +19,7 @@ exports.createTodo = async (req, res) => {
             task,
             priority,
             dueDate,
+            remark,
             projectId,
             assignedBy: req.user._id
         });
@@ -51,7 +52,7 @@ exports.getProjectTodos = async (req, res) => {
  */
 exports.updateTodoStatus = async (req, res) => {
     try {
-        const { status, workPercent } = req.body;
+        const { status, workPercent, remark } = req.body;
         const todo = await Todo.findById(req.params.id);
 
         if (!todo) {
@@ -60,6 +61,8 @@ exports.updateTodoStatus = async (req, res) => {
 
         if (status) todo.status = status;
         if (workPercent !== undefined) todo.workPercent = Math.min(100, Math.max(0, parseInt(workPercent) || 0));
+        if (remark !== undefined) todo.remark = remark;
+        
         todo.lastUpdatedBy = req.user._id;
         await todo.save();
 

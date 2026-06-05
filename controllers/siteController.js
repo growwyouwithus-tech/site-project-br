@@ -601,7 +601,6 @@ const recordStockOut = async (req, res, next) => {
         // Deduct quantity from stock
         stock.quantity -= quantityVal;
         stock.consumed = (stock.consumed || 0) + quantityVal;
-        stock.totalPrice = stock.quantity * stock.unitPrice;
         await stock.save();
 
         // Create StockOut record
@@ -1752,7 +1751,10 @@ const getSiteMachines = async (req, res, next) => {
         const machines = await Machine.find({
             $or: [
                 { projectId: { $in: targetObjectIds } },
-                { assignedToContractor: { $in: contractorIds } }
+                { 
+                    assignedToContractor: { $in: contractorIds },
+                    projectId: null
+                }
             ],
             status: { $in: ['in-use', 'available'] }
         })

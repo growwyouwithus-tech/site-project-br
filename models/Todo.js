@@ -10,6 +10,11 @@ const todoSchema = new mongoose.Schema({
         required: [true, 'Task description is required'],
         trim: true
     },
+    remark: {
+        type: String,
+        trim: true,
+        default: ''
+    },
     projectId: {
         type: mongoose.Schema.Types.ObjectId,
         ref: 'Project',

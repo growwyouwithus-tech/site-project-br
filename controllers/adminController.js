@@ -1196,8 +1196,8 @@ const createContractorPayment = async (req, res, next) => {
         // Determine the clean projectId for the payment record
         const paymentProjectId = (actualProjectId && String(actualProjectId).trim() !== '')
             ? actualProjectId
-            : (contractor.assignedProjects && contractor.assignedProjects.length > 0
-                ? contractor.assignedProjects[0]
+            : (contractor.activeAssignments && contractor.activeAssignments.length > 0
+                ? contractor.activeAssignments[0].projectId
                 : undefined);
 
         const payment = new ContractorPayment({
@@ -1218,8 +1218,12 @@ const createContractorPayment = async (req, res, next) => {
         await payment.save();
 
         // Update Contractor Financials (Advance/Pending) - ONLY FOR CURRENT PROJECT
-        if (!isPastProject && paymentProjectId) {
-            const assignmentIndex = contractor.activeAssignments.findIndex(a => a.projectId && a.projectId.toString() === paymentProjectId.toString());
+        if (!isPastProject) {
+            const assignmentIndex = contractor.activeAssignments.findIndex(a => {
+                const aProjId = a.projectId ? a.projectId.toString() : 'unassigned';
+                const pProjId = (paymentProjectId && paymentProjectId !== 'null' && paymentProjectId !== 'undefined') ? paymentProjectId.toString() : 'unassigned';
+                return aProjId === pProjId;
+            });
             
             if (assignmentIndex !== -1) {
                 const assignment = contractor.activeAssignments[assignmentIndex];
@@ -2710,7 +2714,7 @@ const allocateFunds = async (req, res, next) => {
 
 const generateReport = async (req, res, next) => {
     try {
-        const { type, startDate, endDate, projectId } = req.query;
+        const { type, startDate, endDate, projectId, userId } = req.query;
         let data;
 
         const createdAtFilter = {};
@@ -2726,6 +2730,9 @@ const generateReport = async (req, res, next) => {
         if (projectId) {
             createdAtFilter.projectId = projectId;
         }
+        if (userId) {
+            createdAtFilter.addedBy = userId;
+        }
 
         const dateFieldFilter = {};
         if (startDate || endDate) {
@@ -2739,6 +2746,11 @@ const generateReport = async (req, res, next) => {
         }
         if (projectId) {
             dateFieldFilter.projectId = projectId;
+        }
+        // Specific user fields mapped per logic below, but we can add recordedBy/userId etc
+        if (userId) {
+            // Because different models have different user fields, we might need custom logic, 
+            // but setting a general filter for now.
         }
 
         const attendanceDateFilter = {};
@@ -2759,11 +2771,21 @@ const generateReport = async (req, res, next) => {
                 const ContractorPayment = require('../models/ContractorPayment');
                 const LabourPayment = require('../models/LabourPayment');
 
-                const [genExps, venExps, conExps, labExps] = await Promise.all([
+                const CreditorPayment = require('../models/CreditorPayment');
+                const Transaction = require('../models/Transaction');
+
+                const [genExps, venExps, conExps, labExps, creditorExps, bankTransfers] = await Promise.all([
                     Expense.find(filter).populate('projectId', 'name').populate('addedBy', 'name').lean(),
                     VendorPayment.find(dateFieldFilter).populate('vendorId', 'name').populate('recordedBy', 'name').lean(),
-                    ContractorPayment.find(dateFieldFilter).populate('contractorId', 'name').populate('paidBy', 'name').lean(),
-                    LabourPayment.find(dateFieldFilter).populate('labourId', 'name').populate('userId', 'name').lean()
+                    ContractorPayment.find(dateFieldFilter).populate('contractorId', 'name').populate('paidBy', 'name').populate('projectId', 'name').lean(),
+                    LabourPayment.find(dateFieldFilter).populate('labourId', 'name').populate('userId', 'name').lean(),
+                    CreditorPayment.find(dateFieldFilter).populate('creditorId', 'name').populate('recordedBy', 'name').lean(),
+                    // For bank to bank, we look for debits that are not linked to standard entities
+                    Transaction.find({ 
+                        ...dateFieldFilter, 
+                        type: 'debit',
+                        category: { $in: ['manager_transfer', 'other', 'wallet_allocation', 'maintenance', 'third_party_funds'] }
+                    }).populate('addedBy', 'name').populate('projectId', 'name').lean()
                 ]);
 
                 const allExpenses = [
@@ -2772,7 +2794,7 @@ const generateReport = async (req, res, next) => {
                         ...v,
                         projectId: v.projectId || null,
                         amount: v.amount,
-                        name: `Vendor Payment: ${v.vendorId?.name || 'Unknown'}`,
+                        name: v.vendorId?.name || 'Unknown',
                         category: 'vendor_payment',
                         addedBy: v.recordedBy,
                         reportType: 'Vendor Payment',
@@ -2782,7 +2804,7 @@ const generateReport = async (req, res, next) => {
                         ...c,
                         projectId: c.projectId || null,
                         amount: c.amount,
-                        name: `Contractor Payment: ${c.contractorName || c.contractorId?.name || 'Unknown'}`,
+                        name: c.contractorName || c.contractorId?.name || 'Unknown',
                         category: 'contractor_payment',
                         addedBy: c.paidBy,
                         reportType: 'Contractor Payment',
@@ -2792,14 +2814,34 @@ const generateReport = async (req, res, next) => {
                         ...l,
                         projectId: l.projectId || null,
                         amount: l.amount,
-                        name: `Labour Payment: ${l.labourId?.name || 'Unknown'}`,
+                        name: l.labourId?.name || 'Unknown',
                         category: 'labour_payment',
                         addedBy: l.userId,
                         reportType: 'Labour Payment',
                         createdAt: l.date || l.createdAt
+                    })),
+                    ...creditorExps.map(c => ({
+                        ...c,
+                        projectId: null,
+                        amount: c.amount,
+                        name: c.creditorId?.name || 'Unknown',
+                        category: 'creditor_payment',
+                        addedBy: c.recordedBy,
+                        reportType: 'Creditor Payment',
+                        createdAt: c.date || c.createdAt
+                    })),
+                    ...bankTransfers.map(b => ({
+                        ...b,
+                        projectId: b.projectId || null,
+                        amount: b.amount,
+                        name: b.description || 'Bank / Internal Transfer',
+                        category: b.category,
+                        paymentMode: b.paymentMode || 'bank',
+                        addedBy: b.addedBy,
+                        reportType: 'Internal Expense',
+                        createdAt: b.date || b.createdAt
                     }))
-                ];
-                allExpenses.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+                ].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
                 data = allExpenses;
                 break;
             }
@@ -2822,20 +2864,49 @@ const generateReport = async (req, res, next) => {
                 }));
                 break;
 
-            case 'stock':
-                data = await Stock.find(filter)
-                    .populate('projectId', 'name')
-                    .populate('vendorId', 'name')
-                    .populate('addedBy', 'name')
-                    .select('materialName quantity unit unitPrice totalPrice vehicleNumber remarks addedBy createdAt projectId vendorId')
-                    .lean();
+            case 'stock': {
+                const StockOut = require('../models/StockOut');
+                const stockFilter = { ...filter };
+                if (userId) stockFilter.addedBy = userId;
+                
+                const stockOutFilter = { ...dateFieldFilter };
+                if (userId) stockOutFilter.recordedBy = userId;
+
+                const [stocks, stockOuts] = await Promise.all([
+                    Stock.find(stockFilter).populate('projectId', 'name').populate('vendorId', 'name').populate('addedBy', 'name').lean(),
+                    StockOut.find(stockOutFilter).populate('projectId', 'name').populate('recordedBy', 'name').lean()
+                ]);
+
+                data = [
+                    ...stocks.map(s => ({
+                        ...s,
+                        type: 'Stock In',
+                        createdAt: s.date || s.createdAt
+                    })),
+                    ...stockOuts.map(so => ({
+                        ...so,
+                        type: 'Stock Out',
+                        materialName: so.materialName,
+                        quantity: so.quantity,
+                        unit: so.unit || '-',
+                        unitPrice: null,
+                        totalPrice: null,
+                        vehicleNumber: '-',
+                        vendorId: null,
+                        addedBy: so.recordedBy,
+                        remarks: so.remarks || so.purpose,
+                        createdAt: so.date || so.createdAt
+                    }))
+                ].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
                 break;
+            }
 
             case 'machines':
-                data = await Machine.find({ ...filter, category: 'big' })
+                data = await Machine.find(filter)
                     .populate('projectId', 'name')
                     .populate('assignedToContractor', 'name')
-                    .select('name model plateNumber category quantity status ownershipType vendorName perDayExpense assignedRentalPerDay rentalType projectId assignedToContractor createdAt')
+                    .populate('creditorId', 'name')
+                    .sort({ createdAt: -1 })
                     .lean();
                 break;
 
@@ -2950,37 +3021,47 @@ const generateReport = async (req, res, next) => {
             }
 
             case 'pl': {
+                // Calculate P&L metrics
+                const expenses = await Expense.find(filter);
+                const Project = require('../models/Project');
+                const projects = await Project.find(filter);
+
+                const totalRevenue = projects.reduce((sum, p) => sum + (p.budget || 0), 0);
+                const totalExpenses = expenses.reduce((sum, e) => sum + (e.amount || 0), 0);
+
                 const VendorPayment = require('../models/VendorPayment');
                 const ContractorPayment = require('../models/ContractorPayment');
                 const LabourPayment = require('../models/LabourPayment');
                 const Transaction = require('../models/Transaction');
 
-                const [allGenExps, allVenExps, allConExps, allLabExps, allProjs, capitalIncomes] = await Promise.all([
-                    Expense.find(filter).lean(),
-                    VendorPayment.find(dateFieldFilter).lean(),
-                    ContractorPayment.find(dateFieldFilter).lean(),
-                    LabourPayment.find(dateFieldFilter).lean(),
-                    Project.find().lean(),
-                    Transaction.find({ ...filter, type: 'credit', category: 'capital' }).lean()
+                const [vendorP, contractorP, labourP, capitalP] = await Promise.all([
+                    VendorPayment.find(dateFieldFilter),
+                    ContractorPayment.find(dateFieldFilter),
+                    LabourPayment.find(dateFieldFilter),
+                    Transaction.find({ ...dateFieldFilter, category: 'capital', type: 'credit' })
                 ]);
 
-                const totalGen = allGenExps.reduce((sum, exp) => sum + (exp.amount || 0), 0);
-                const totalVen = allVenExps.reduce((sum, v) => sum + (v.amount || 0), 0);
-                const totalCon = allConExps.reduce((sum, c) => sum + (c.amount || 0), 0);
-                const totalLab = allLabExps.reduce((sum, l) => sum + (l.amount || 0), 0);
-                const totalExpenses = totalGen + totalVen + totalCon + totalLab;
+                const vpTotal = vendorP.reduce((sum, v) => sum + (v.amount || 0), 0);
+                const cpTotal = contractorP.reduce((sum, c) => sum + (c.amount || 0), 0);
+                const lpTotal = labourP.reduce((sum, l) => sum + (l.amount || 0), 0);
+                const capTotal = capitalP.reduce((sum, c) => sum + (c.amount || 0), 0);
 
-                const totalBudget = allProjs.reduce((sum, proj) => sum + (proj.budget || 0), 0);
-                const totalCapitalIncome = capitalIncomes.reduce((sum, t) => sum + (t.amount || 0), 0);
-
-                const totalRevenue = totalBudget + totalCapitalIncome;
-                const profit = totalRevenue - totalExpenses;
+                const trueRevenue = totalRevenue + capTotal;
+                const trueExpenses = totalExpenses + vpTotal + cpTotal + lpTotal;
 
                 data = [
-                    { type: 'Revenue', amount: totalBudget, description: 'Total Project Budget' },
-                    { type: 'Revenue', amount: totalCapitalIncome, description: 'Other Capital/Income (e.g. Machine Rent)' },
-                    { type: 'Expenses', amount: totalExpenses, description: 'Total Expenses (All Types)' },
-                    { type: 'Profit', amount: profit, description: 'Net Profit/Loss' }
+                    { type: 'Revenue', description: 'Total Project Budgets', amount: totalRevenue },
+                    { type: 'Revenue', description: 'Capital Injections', amount: capTotal },
+                    ...projects.map(p => ({
+                        type: 'Revenue',
+                        description: `Project Budget: ${p.name}`,
+                        amount: p.budget || 0
+                    })),
+                    { type: 'Expenses', description: 'General Expenses', amount: totalExpenses },
+                    { type: 'Expenses', description: 'Vendor Payments', amount: vpTotal },
+                    { type: 'Expenses', description: 'Contractor Payments', amount: cpTotal },
+                    { type: 'Expenses', description: 'Labour Wages', amount: lpTotal },
+                    { type: 'Profit', description: 'Net Balance', amount: trueRevenue - trueExpenses }
                 ];
                 break;
             }
@@ -3848,18 +3929,58 @@ const deleteContractorPayment = async (req, res, next) => {
                 contractor.projectHistory[historyIndex] = histEntry;
                 contractor.markModified('projectHistory');
             } else {
-                // Revert current project payment
-                let amountLeft = payment.amount;
-                if (contractor.advancePayment > 0) {
-                    const reduceAdv = Math.min(contractor.advancePayment, amountLeft);
-                    contractor.advancePayment -= reduceAdv;
-                    amountLeft -= reduceAdv;
+                // Revert current project payment from activeAssignments
+                let assignmentIndex = contractor.activeAssignments.findIndex(a => {
+                    const aProjId = a.projectId ? a.projectId.toString() : 'unassigned';
+                    const pProjId = (payment.projectId && payment.projectId.toString() !== 'null' && payment.projectId.toString() !== 'undefined') ? payment.projectId.toString() : 'unassigned';
+                    return aProjId === pProjId;
+                });
+                
+                // Fallback to first assignment if no exact project match found
+                if (assignmentIndex === -1 && contractor.activeAssignments.length > 0) {
+                    assignmentIndex = 0;
                 }
-                if (amountLeft > 0) {
-                    contractor.pendingAmount = (contractor.pendingAmount || 0) + amountLeft;
+
+                if (assignmentIndex !== -1) {
+                    const assignment = contractor.activeAssignments[assignmentIndex];
+                    let amountLeft = payment.amount;
+                    
+                    if (payment.isAdvance) {
+                        assignment.advancePayment = Math.max(0, (assignment.advancePayment || 0) - payment.amount);
+                    } else {
+                        // Revert advance recovered logic if any? We don't store advanceRecovered explicitly on payment. 
+                        // But we can just reduce totalPaid.
+                        assignment.totalPaid = Math.max(0, (assignment.totalPaid || 0) - payment.amount);
+                        
+                        if (assignment.advancePayment > 0) {
+                            const reduceAdv = Math.min(assignment.advancePayment, amountLeft);
+                            assignment.advancePayment -= reduceAdv;
+                            amountLeft -= reduceAdv;
+                        }
+                        if (amountLeft > 0) {
+                            assignment.pendingAmount = (assignment.pendingAmount || 0) + amountLeft;
+                        }
+                    }
+
+                    // Mirror to root for backward compatibility
+                    if (assignmentIndex === 0) {
+                        contractor.totalPaid = assignment.totalPaid;
+                        contractor.advancePayment = assignment.advancePayment;
+                        contractor.pendingAmount = assignment.pendingAmount;
+                    }
+                } else {
+                    // Fallback to root if activeAssignments is empty
+                    let amountLeft = payment.amount;
+                    if (contractor.advancePayment > 0) {
+                        const reduceAdv = Math.min(contractor.advancePayment, amountLeft);
+                        contractor.advancePayment -= reduceAdv;
+                        amountLeft -= reduceAdv;
+                    }
+                    if (amountLeft > 0) {
+                        contractor.pendingAmount = (contractor.pendingAmount || 0) + amountLeft;
+                    }
+                    contractor.totalPaid = Math.max(0, (contractor.totalPaid || 0) - payment.amount);
                 }
-                // Reverse the totalPaid
-                contractor.totalPaid = Math.max(0, (contractor.totalPaid || 0) - payment.amount);
             }
             await contractor.save();
         }

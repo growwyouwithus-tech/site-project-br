@@ -2,7 +2,8 @@
   "userId": "6a226f267474f0bd65be8084",
   "userAssignedSites": [
     "6a226c207474f0bd65be7fc1",
-    "6a2278dd7474f0bd65be83c1"
+    "6a2278dd7474f0bd65be83c1",
+    "6a22a118584454a3e5a0d614"
   ],
   "contractorsFound": 1,
   "contractors": [
@@ -15,7 +16,8 @@
       "distanceUnit": "km",
       "expensePerUnit": 30000,
       "assignedProjects": [
-        "6a226c207474f0bd65be7fc1"
+        "6a226c207474f0bd65be7fc1",
+        "6a2278dd7474f0bd65be83c1"
       ],
       "status": "active",
       "pendingAmount": -200000,
@@ -42,16 +44,39 @@
           "distanceValue": 2,
           "distanceUnit": "km",
           "expensePerUnit": 20000,
-          "totalPaid": 20000,
+          "totalPaid": 170000,
           "advancePayment": 0,
           "totalMachineRent": 0,
           "_id": "6a226e3d7474f0bd65be800a"
         }
       ],
       "createdAt": "2026-06-05T06:32:10.262Z",
-      "updatedAt": "2026-06-05T07:30:27.408Z",
-      "__v": 3,
-      "projectAssignedAt": "2026-06-05T06:35:41.751Z"
+      "updatedAt": "2026-06-05T12:16:30.306Z",
+      "__v": 6,
+      "projectAssignedAt": "2026-06-05T06:35:41.751Z",
+      "activeAssignments": [
+        {
+          "projectId": "6a226c207474f0bd65be7fc1",
+          "assignedAt": "2026-06-05T06:35:41.751Z",
+          "distanceValue": 1,
+          "distanceUnit": "km",
+          "expensePerUnit": 300000,
+          "totalPaid": 0,
+          "advancePayment": 0,
+          "_id": "6a22a2089d3cf85f45636f09"
+        },
+        {
+          "projectId": "6a2278dd7474f0bd65be83c1",
+          "assignedAt": "2026-06-05T10:44:44.649Z",
+          "distanceValue": 2,
+          "distanceUnit": "km",
+          "expensePerUnit": 5000,
+          "totalPaid": 0,
+          "advancePayment": 0,
+          "_id": "6a22a89cc9b4a78ae4ba6cbd"
+        }
+      ],
+      "capitalProvided": 0
     }
   ]
 }
