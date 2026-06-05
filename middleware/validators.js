@@ -83,8 +83,8 @@ const machineValidation = [
   body('quantity').optional(),  // Make quantity optional since consumables use text, machines use numbers
 
   // Conditional validation for rental machines
-  body('vendorName').if(body('ownershipType').equals('rented'))
-    .trim().notEmpty().withMessage('Vendor name is required for rented machines'),
+  body('creditorId').if(body('ownershipType').equals('rented'))
+    .trim().notEmpty().withMessage('Creditor is required for rented machines'),
   body('perDayExpense').if(body('ownershipType').equals('rented'))
     .isNumeric().withMessage('Per day expense must be a number')
     .isFloat({ gt: 0 }).withMessage('Per day expense must be greater than 0'),
