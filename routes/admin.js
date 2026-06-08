@@ -94,7 +94,8 @@ const {
   updateCreditor,
   deleteCreditor,
   getCreditorDetails,
-  recordCreditorPayment
+  recordCreditorPayment,
+  deleteCreditorPayment
 } = require('../controllers/creditorController');
 
 const {
@@ -234,5 +235,6 @@ router.put('/creditors/:id', updateCreditor);
 router.delete('/creditors/:id', deleteCreditor);
 router.get('/creditors/:id', getCreditorDetails);
 router.post('/creditors/payment', recordCreditorPayment);
+router.delete('/creditors/payments/:id', deleteCreditorPayment);
 
 module.exports = router;

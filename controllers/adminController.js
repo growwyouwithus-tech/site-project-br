@@ -3654,7 +3654,9 @@ const getBankDetailWithTransactions = async (req, res, next) => {
                     ...t,
                     source: 'Manual Transaction',
                     amount: t.amount,
-                    type: t.type
+                    type: t.type,
+                    refId: t._id,
+                    refModel: 'Transaction'
                 }, partyName, partyType);
             }),
             ...expenses.map(e => {
@@ -3674,7 +3676,9 @@ const getBankDetailWithTransactions = async (req, res, next) => {
                     source: 'Expense',
                     paymentMode: e.paymentMode,
                     bankId: e.bankId,
-                    addedBy: e.addedBy
+                    addedBy: e.addedBy,
+                    refId: e._id,
+                    refModel: 'Expense'
                 }, partyName, partyType);
             }),
             ...vendorPayments.map(v => {
@@ -3693,7 +3697,9 @@ const getBankDetailWithTransactions = async (req, res, next) => {
                     source: 'Vendor Payment',
                     paymentMode: v.paymentMode,
                     bankId: v.bankId,
-                    addedBy: v.recordedBy
+                    addedBy: v.recordedBy,
+                    refId: v._id,
+                    refModel: 'VendorPayment'
                 }, partyName, partyType);
             }),
             ...contractorPayments.map(c => {
@@ -3712,7 +3718,9 @@ const getBankDetailWithTransactions = async (req, res, next) => {
                     source: 'Contractor Payment',
                     paymentMode: c.paymentMode,
                     bankId: c.bankId,
-                    addedBy: c.paidBy
+                    addedBy: c.paidBy,
+                    refId: c._id,
+                    refModel: 'ContractorPayment'
                 }, partyName, partyType);
             }),
             ...labourPayments.map(l => {
@@ -3731,7 +3739,9 @@ const getBankDetailWithTransactions = async (req, res, next) => {
                     source: 'Labour Payment',
                     paymentMode: l.paymentMode,
                     bankId: l.bankId,
-                    addedBy: l.userId
+                    addedBy: l.userId,
+                    refId: l._id,
+                    refModel: 'LabourPayment'
                 }, partyName, partyType);
             })
         ];

@@ -222,11 +222,65 @@ const recordCreditorPayment = async (req, res, next) => {
     }
 };
 
+// Delete creditor payment
+const deleteCreditorPayment = async (req, res, next) => {
+    try {
+        const { id } = req.params;
+        const { CreditorPayment, BankDetail } = require('../models');
+        const payment = await CreditorPayment.findById(id);
+
+        if (!payment) {
+            return res.status(404).json({ success: false, error: 'Payment not found' });
+        }
+
+        // Reverse Creditor update
+        const creditor = await Creditor.findById(payment.creditorId);
+        if (creditor) {
+            creditor.currentBalance -= payment.amount;
+            // Remove the transaction from creditor
+            creditor.transactions = creditor.transactions.filter(t => t.refId?.toString() !== payment._id.toString());
+            await creditor.save();
+        }
+
+        // Reverse Bank update if bankId was present
+        if (payment.bankId) {
+            await BankDetail.findByIdAndUpdate(payment.bankId, {
+                $inc: { currentBalance: payment.amount },
+                $pull: { transactions: { refId: payment._id } }
+            });
+        }
+
+        // Also check if this was an inter-creditor transfer (paymentMode === 'creditor')
+        if (payment.paymentMode === 'creditor' && payment.remarks?.includes('Transfer from ')) {
+            // Finding the source creditor is a bit tricky, but we can look for the transaction in other creditors
+            const sourceCreditors = await Creditor.find({ 'transactions.refId': payment._id });
+            for (let sc of sourceCreditors) {
+                if (sc._id.toString() !== payment.creditorId.toString()) {
+                    // This is the source creditor
+                    sc.currentBalance += payment.amount;
+                    sc.transactions = sc.transactions.filter(t => t.refId?.toString() !== payment._id.toString());
+                    await sc.save();
+                }
+            }
+        }
+
+        await payment.deleteOne();
+
+        res.json({
+            success: true,
+            message: 'Payment deleted successfully'
+        });
+    } catch (error) {
+        next(error);
+    }
+};
+
 module.exports = {
     getCreditors,
     createCreditor,
     updateCreditor,
     deleteCreditor,
     getCreditorDetails,
-    recordCreditorPayment
+    recordCreditorPayment,
+    deleteCreditorPayment
 };
