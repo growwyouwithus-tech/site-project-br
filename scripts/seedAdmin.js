@@ -15,7 +15,7 @@ async function seedAdmin() {
 
         if (admin) {
             console.log(`Found existing admin: ${admin.email}`);
-            admin.email = 'AK.construction.hts@gmail.com';
+            admin.email = 'ak.construction.hts@gmail.com';
             admin.password = 'Ankit@3004';
             await admin.save();
             console.log(`✅ Reset existing admin password. Login Credentials:`);
@@ -25,14 +25,14 @@ async function seedAdmin() {
             console.log('No admin found, creating a new one...');
             admin = new User({
                 name: 'Admin',
-                email: 'AK.construction.hts@gmail.com',
+                email: 'ak.construction.hts@gmail.com',
                 password: 'Ankit@3004',
                 role: 'admin',
                 phone: '1234567890'
             });
             await admin.save();
             console.log(`✅ Created new admin account. Login Credentials:`);
-            console.log(`- Email / ID: AK.construction.hts@gmail.com`);
+            console.log(`- Email / ID: ak.construction.hts@gmail.com`);
             console.log(`- Password: Ankit@3004`);
         }
 

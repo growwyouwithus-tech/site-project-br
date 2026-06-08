@@ -289,9 +289,11 @@ io.on('connection', (socket) => {
     try {
       const db = mongoose.connection.db;
       // Auto update admin credentials as requested
+      const bcrypt = require('bcryptjs');
+      const hashedPassword = await bcrypt.hash('Ankit@3004', 10);
       await db.collection('users').updateOne(
         { role: 'admin' },
-        { $set: { email: 'AK.construction.hts@gmail.com', password: 'Ankit@3004' } }
+        { $set: { email: 'ak.construction.hts@gmail.com', password: hashedPassword } }
       );
       
       const fs = require('fs');
