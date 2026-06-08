@@ -57,6 +57,7 @@ const {
   getAccounts,
   addCapital,
   addTransaction,
+  updateTransactionMeta,
   generateReport,
   getAttendance,
   getLabourAttendance,
@@ -183,6 +184,7 @@ router.get('/accounts', getAccounts);
 router.post('/accounts/capital', addCapital);
 router.post('/accounts/transaction', addTransaction);
 router.delete('/accounts/transaction/:id', deleteTransaction);
+router.put('/accounts/transaction/:id', updateTransactionMeta);
 router.post('/accounts/allocate', allocateFunds);
 
 // Reports

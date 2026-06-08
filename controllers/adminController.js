@@ -2652,6 +2652,40 @@ const addTransaction = async (req, res, next) => {
     }
 };
 
+const updateTransactionMeta = async (req, res, next) => {
+    try {
+        const { id } = req.params;
+        const { description, date } = req.body;
+        
+        const transaction = await Transaction.findById(id);
+        if (!transaction) return res.status(404).json({ success: false, error: 'Transaction not found' });
+        
+        transaction.description = description || transaction.description;
+        transaction.date = date || transaction.date;
+        await transaction.save();
+
+        // Update in Creditor if present
+        if (transaction.creditorId) {
+            await Creditor.updateOne(
+                { _id: transaction.creditorId, 'transactions.refId': transaction._id },
+                { $set: { 'transactions.$.description': transaction.description, 'transactions.$.date': transaction.date } }
+            );
+        }
+
+        // Update in BankDetail if present
+        if (transaction.bankId) {
+            await BankDetail.updateOne(
+                { _id: transaction.bankId, 'transactions.refId': transaction._id },
+                { $set: { 'transactions.$.description': transaction.description, 'transactions.$.date': transaction.date } }
+            );
+        }
+
+        res.json({ success: true, message: 'Transaction details updated' });
+    } catch (error) {
+        next(error);
+    }
+};
+
 // Allocate funds to site manager wallet
 const allocateFunds = async (req, res, next) => {
     try {
@@ -3325,6 +3359,7 @@ module.exports = {
     getAccounts,
     addCapital,
     addTransaction,
+    updateTransactionMeta,
     generateReport,
     getAttendance,
     getLabourAttendance,
@@ -3841,6 +3876,16 @@ const deleteTransaction = async (req, res, next) => {
             });
         }
 
+        // Reverse Bank update if applicable
+        if (transaction.bankId) {
+            const isCredit = transaction.type === 'credit';
+            const balanceChange = isCredit ? -transaction.amount : transaction.amount;
+            await BankDetail.findByIdAndUpdate(transaction.bankId, {
+                $inc: { currentBalance: balanceChange },
+                $pull: { transactions: { refId: transaction._id } }
+            });
+        }
+
         await transaction.deleteOne();
 
         res.json({ success: true, message: 'Transaction deleted successfully' });
@@ -4180,6 +4225,7 @@ module.exports = {
     getBankDetails,
     transferBankToBank,
     deleteTransaction,
+    updateTransactionMeta,
     deleteVendorPayment,
     deleteContractorPayment,
 

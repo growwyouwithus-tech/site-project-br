@@ -1,4 +1,4 @@
-/**
+/*
  * Input Validation Middleware using express-validator
  * Validates and sanitizes all incoming requests
  */
