@@ -257,6 +257,29 @@ app.get('/api/migrate', async (req, res) => {
 });
 
 // 404 handler
+app.get('/api/repair-creditors', async (req, res) => {
+  try {
+    const Creditor = require('./models/Creditor');
+    const creditors = await Creditor.find();
+    let fixed = 0;
+    for (let c of creditors) {
+      let bal = 0;
+      for (let t of c.transactions) {
+        if (t.type === 'credit') bal += t.amount;
+        else bal -= t.amount;
+      }
+      if (c.currentBalance !== bal) {
+        c.currentBalance = bal;
+        await c.save();
+        fixed++;
+      }
+    }
+    res.json({ success: true, message: `Repaired ${fixed} creditors.` });
+  } catch(e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 app.use(notFoundHandler);
 
 // Error handler (must be last)
@@ -275,32 +298,6 @@ io.on('connection', (socket) => {
     connectedUsers.set(userId, socket.id);
     socket.join(userId); // Join room with userId
     console.log(`👤 User ${userId} joined with socket ${socket.id}`);
-  });
-
-  // Debug contractor and site manager, and UPDATE admin credentials
-  const mongoose = require('mongoose');
-  mongoose.connection.once('open', async () => {
-    try {
-      const db = mongoose.connection.db;
-      // Auto update admin credentials as requested
-      const bcrypt = require('bcryptjs');
-      const hashedPassword = await bcrypt.hash('Ankit@3004', 10);
-      await db.collection('users').updateOne(
-        { role: 'admin' },
-        { $set: { email: 'ak.construction.hts@gmail.com', password: hashedPassword } }
-      );
-      
-      const fs = require('fs');
-      const contractors = await db.collection('contractors').find({ name: /parvesh/i }).toArray();
-      const users = await db.collection('users').find({ role: 'sitemanager' }).toArray();
-      fs.writeFileSync('debug.json', JSON.stringify({
-        contractors,
-        siteManagers: users.map(u => ({ email: u.email, assignedSites: u.assignedSites }))
-      }, null, 2));
-      console.log('✅ Admin credentials updated and Debug written to debug.json');
-    } catch (e) {
-      console.error('Debug error:', e);
-    }
   });
 
   // Handle disconnect

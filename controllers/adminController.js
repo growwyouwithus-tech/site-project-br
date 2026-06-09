@@ -903,16 +903,16 @@ const deleteExpense = async (req, res, next) => {
         if (expense.bankId) {
             await BankDetail.findByIdAndUpdate(expense.bankId, {
                 $inc: { currentBalance: expense.amount },
-                $push: {
-                    transactions: {
-                        type: 'credit',
-                        amount: expense.amount,
-                        date: new Date(),
-                        description: `Reversal of expense: ${expense.name} (Deleted)`,
-                        refId: expense._id,
-                        refModel: 'Expense'
-                    }
-                }
+                $pull: { transactions: { refId: expense._id } }
+            });
+        }
+
+        // If expense was on credit, reverse the creditor transaction
+        if (expense.creditorId) {
+            const Creditor = require('../models/Creditor');
+            await Creditor.findByIdAndUpdate(expense.creditorId, {
+                $inc: { currentBalance: expense.amount }, // Reverse the debit by adding the amount back
+                $pull: { transactions: { refId: expense._id } }
             });
         }
 

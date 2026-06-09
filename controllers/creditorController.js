@@ -229,42 +229,49 @@ const deleteCreditorPayment = async (req, res, next) => {
         const { CreditorPayment, BankDetail } = require('../models');
         const payment = await CreditorPayment.findById(id);
 
-        if (!payment) {
-            return res.status(404).json({ success: false, error: 'Payment not found' });
-        }
+        let foundAny = false;
 
-        // Reverse Creditor update
-        const creditor = await Creditor.findById(payment.creditorId);
-        if (creditor) {
-            creditor.currentBalance -= payment.amount;
-            // Remove the transaction from creditor
-            creditor.transactions = creditor.transactions.filter(t => t.refId?.toString() !== payment._id.toString());
-            await creditor.save();
-        }
-
-        // Reverse Bank update if bankId was present
-        if (payment.bankId) {
-            await BankDetail.findByIdAndUpdate(payment.bankId, {
-                $inc: { currentBalance: payment.amount },
-                $pull: { transactions: { refId: payment._id } }
-            });
-        }
-
-        // Also check if this was an inter-creditor transfer (paymentMode === 'creditor')
-        if (payment.paymentMode === 'creditor' && payment.remarks?.includes('Transfer from ')) {
-            // Finding the source creditor is a bit tricky, but we can look for the transaction in other creditors
-            const sourceCreditors = await Creditor.find({ 'transactions.refId': payment._id });
-            for (let sc of sourceCreditors) {
-                if (sc._id.toString() !== payment.creditorId.toString()) {
-                    // This is the source creditor
-                    sc.currentBalance += payment.amount;
-                    sc.transactions = sc.transactions.filter(t => t.refId?.toString() !== payment._id.toString());
-                    await sc.save();
-                }
+        // 1. Clean up Creditor
+        // Find ALL creditors that have this transaction (could be source and destination in a transfer)
+        const creditors = await Creditor.find({ 'transactions.refId': id });
+        for (let creditor of creditors) {
+            const tx = creditor.transactions.find(t => t.refId?.toString() === id.toString());
+            if (tx) {
+                // Reverse balance
+                if (tx.type === 'credit') creditor.currentBalance -= tx.amount;
+                else creditor.currentBalance += tx.amount;
+                
+                // Remove transaction
+                creditor.transactions = creditor.transactions.filter(t => t.refId?.toString() !== id.toString());
+                await creditor.save();
+                foundAny = true;
             }
         }
 
-        await payment.deleteOne();
+        // 2. Clean up BankDetail
+        const banks = await BankDetail.find({ 'transactions.refId': id });
+        for (let bank of banks) {
+            const tx = bank.transactions.find(t => t.refId?.toString() === id.toString());
+            if (tx) {
+                // Reverse balance (if it was debit, we increase back)
+                if (tx.type === 'debit') bank.currentBalance += tx.amount;
+                else bank.currentBalance -= tx.amount;
+                
+                // Remove transaction
+                bank.transactions = bank.transactions.filter(t => t.refId?.toString() !== id.toString());
+                await bank.save();
+                foundAny = true;
+            }
+        }
+
+        if (payment) {
+            await payment.deleteOne();
+            foundAny = true;
+        }
+
+        if (!foundAny) {
+            return res.status(404).json({ success: false, error: 'Payment not found' });
+        }
 
         res.json({
             success: true,
