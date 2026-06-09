@@ -17,9 +17,6 @@ const fs = require('fs');
 // Import MongoDB connection with fallback
 const connectDB = require('./config/database-fallback');
 
-// Connect to MongoDB
-connectDB();
-
 // Import routes
 const authRoutes = require('./routes/auth');
 const adminRoutes = require('./routes/admin');
@@ -280,9 +277,6 @@ io.on('connection', (socket) => {
     console.log(`👤 User ${userId} joined with socket ${socket.id}`);
   });
 
-  // Connect to MongoDB
-  connectDB();
-
   // Debug contractor and site manager, and UPDATE admin credentials
   const mongoose = require('mongoose');
   mongoose.connection.once('open', async () => {
@@ -381,4 +375,4 @@ process.on('uncaughtException', (err) => {
 });
 
 module.exports = { app, server, io };
-// Restart Trigger 2
+// Restart Trigger 3
