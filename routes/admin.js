@@ -85,7 +85,9 @@ const {
   deleteItemName,
   verifyPassword,
   getProfile,
-  getMachineFuelUsage
+  getMachineFuelUsage,
+  assignMachineQuantity,
+  unassignMachineQuantity
 } = require('../controllers/adminController');
 
 const {
@@ -139,6 +141,8 @@ router.put('/machines/:id', uploadSingle, updateMachine);
 router.delete('/machines/:id', deleteMachine);
 router.post('/machines/:id/return', returnRentedMachine);
 router.post('/machines/:id/re-rent', reRentMachine);
+router.post('/machines/:id/assign-qty', assignMachineQuantity);
+router.post('/machines/:id/unassign-qty', unassignMachineQuantity);
 router.get('/machines/:id/fuel-usage', getMachineFuelUsage);
 
 // Stock
@@ -234,7 +238,7 @@ router.post('/creditors', createCreditor);
 router.put('/creditors/:id', updateCreditor);
 router.delete('/creditors/:id', deleteCreditor);
 router.get('/creditors/:id', getCreditorDetails);
-router.post('/creditors/payment', recordCreditorPayment);
+router.post('/creditors/payment', uploadSingle, recordCreditorPayment);
 router.delete('/creditors/payments/:id', deleteCreditorPayment);
 
 module.exports = router;

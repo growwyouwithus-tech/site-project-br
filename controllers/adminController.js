@@ -117,7 +117,7 @@ const getProjectDetail = async (req, res, next) => {
             Expense.find({ projectId: id }).lean(),
             Labour.find({ assignedSite: id }).lean(),
             Stock.find({ projectId: id }).populate('vendorId', 'name').sort('-createdAt').lean(),
-            Machine.find({ projectId: id }).sort('-createdAt').lean(),
+            Machine.find({ $or: [{ projectId: id }, { 'assignments.projectId': id }] }).sort('-createdAt').lean(),
             Contractor.find({ assignedProjects: id }).lean(),
             DailyReport.find({ projectId: id }).sort('-createdAt').lean()
         ]);
@@ -1904,13 +1904,105 @@ const reRentMachine = async (req, res, next) => {
         machine.rentPausedHistory = [];
         machine.availableLocation = req.body.availableLocation || 'Main Yard';
 
-        await machine.save();
+        machine.save();
 
         res.json({
             success: true,
-            message: 'Machine re-activated for rental successfully',
+            message: 'Machine re-activated successfully',
             data: machine
         });
+    } catch (error) {
+        console.error('Error re-renting machine:', error);
+        next(error);
+    }
+};
+
+const assignMachineQuantity = async (req, res, next) => {
+    try {
+        const { id } = req.params;
+        const { projectId, quantity } = req.body;
+        const qtyToAssign = Number(quantity);
+
+        if (!projectId || qtyToAssign <= 0) {
+            return res.status(400).json({ success: false, error: 'Valid Project ID and Quantity > 0 are required' });
+        }
+
+        const machine = await Machine.findById(id);
+        if (!machine) return res.status(404).json({ success: false, error: 'Machine not found' });
+
+        if (machine.category !== 'lab' && machine.category !== 'equipment') {
+            return res.status(400).json({ success: false, error: 'Only Lab Equipment and Equipment support quantity assignments' });
+        }
+
+        const totalAssigned = (machine.assignments || []).reduce((sum, a) => sum + a.quantity, 0);
+        const availableQty = (Number(machine.quantity) || 1) - totalAssigned;
+
+        if (qtyToAssign > availableQty) {
+            return res.status(400).json({ success: false, error: `Cannot assign ${qtyToAssign}. Only ${availableQty} available.` });
+        }
+
+        // Check if project already has an assignment. If so, add to it.
+        const existingAssignment = machine.assignments?.find(a => a.projectId?.toString() === projectId.toString());
+        if (existingAssignment) {
+            existingAssignment.quantity += qtyToAssign;
+        } else {
+            if (!machine.assignments) machine.assignments = [];
+            machine.assignments.push({
+                projectId,
+                quantity: qtyToAssign,
+                assignedAt: new Date()
+            });
+        }
+
+        // Status logic
+        machine.status = 'in-use';
+        await machine.save();
+
+        res.json({ success: true, message: 'Quantity assigned successfully', data: machine });
+    } catch (error) {
+        next(error);
+    }
+};
+
+const unassignMachineQuantity = async (req, res, next) => {
+    try {
+        const { id } = req.params;
+        const { projectId, quantity } = req.body;
+        const qtyToUnassign = Number(quantity);
+
+        if (!projectId || qtyToUnassign <= 0) {
+            return res.status(400).json({ success: false, error: 'Valid Project ID and Quantity > 0 are required' });
+        }
+
+        const machine = await Machine.findById(id);
+        if (!machine) return res.status(404).json({ success: false, error: 'Machine not found' });
+
+        if (!machine.assignments || machine.assignments.length === 0) {
+            return res.status(400).json({ success: false, error: 'No assignments found' });
+        }
+
+        const existingAssignment = machine.assignments.find(a => a.projectId?.toString() === projectId.toString());
+        if (!existingAssignment) {
+            return res.status(400).json({ success: false, error: 'Not assigned to this project' });
+        }
+
+        if (qtyToUnassign > existingAssignment.quantity) {
+            return res.status(400).json({ success: false, error: `Cannot unassign ${qtyToUnassign}. Only ${existingAssignment.quantity} assigned to this project.` });
+        }
+
+        existingAssignment.quantity -= qtyToUnassign;
+        if (existingAssignment.quantity === 0) {
+            machine.assignments = machine.assignments.filter(a => a.projectId?.toString() !== projectId.toString());
+        }
+
+        const remainingTotalAssigned = machine.assignments.reduce((sum, a) => sum + a.quantity, 0);
+        if (remainingTotalAssigned === 0) {
+            machine.status = 'available'; // Only available if EVERYTHING is unassigned.
+        }
+
+        await machine.save();
+
+        res.json({ success: true, message: 'Quantity unassigned successfully', data: machine });
     } catch (error) {
         next(error);
     }
@@ -3567,7 +3659,7 @@ const getBankDetailWithTransactions = async (req, res, next) => {
         // 4. Contractor Payments
         // 5. Labour Payments
 
-        const [manualTransactions, expenses, vendorPayments, contractorPayments, labourPayments, allBanks] = await Promise.all([
+        const [manualTransactions, expenses, vendorPayments, contractorPayments, labourPayments, creditorPayments, allBanks] = await Promise.all([
             Transaction.find({ bankId: id })
                 .populate('addedBy', 'name role')
                 .populate('creditorId', 'name')
@@ -3593,6 +3685,10 @@ const getBankDetailWithTransactions = async (req, res, next) => {
                 .populate('labourId', 'name')
                 .populate('creditorId', 'name')
                 .populate('userId', 'name role')
+                .lean(),
+            CreditorPayment.find({ bankId: id })
+                .populate('creditorId', 'name')
+                .populate('recordedBy', 'name role')
                 .lean(),
             BankDetail.find().lean()
         ]);
@@ -3742,6 +3838,24 @@ const getBankDetailWithTransactions = async (req, res, next) => {
                     addedBy: l.userId,
                     refId: l._id,
                     refModel: 'LabourPayment'
+                }, partyName, partyType);
+            }),
+            ...creditorPayments.map(cp => {
+                const partyName = cp.creditorId?.name || 'Unknown Creditor';
+                const partyType = 'Creditor';
+                return applyFromTo({
+                    _id: cp._id,
+                    date: cp.date,
+                    description: `Creditor Payment: ${partyName}`,
+                    amount: cp.amount,
+                    type: cp.type === 'debit' ? 'credit' : 'debit', // Bank receives debit (reduces bank bal), bank receives credit (increases bank bal)
+                    category: 'expense',
+                    source: 'Creditor Payment',
+                    paymentMode: cp.paymentMode,
+                    bankId: cp.bankId,
+                    addedBy: cp.recordedBy,
+                    refId: cp._id,
+                    refModel: 'CreditorPayment'
                 }, partyName, partyType);
             })
         ];
@@ -4187,6 +4301,9 @@ module.exports = {
     deleteMachine,
     returnRentedMachine,
     reRentMachine,
+    assignMachineQuantity,
+    unassignMachineQuantity,
+    getMachineFuelUsage,
     getStocks,
     createStock,
     updateStock,

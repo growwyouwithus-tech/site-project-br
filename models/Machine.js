@@ -58,6 +58,20 @@ const machineSchema = new mongoose.Schema({
         type: mongoose.Schema.Types.ObjectId,
         ref: 'Project'
     },
+    assignments: [{
+        projectId: {
+            type: mongoose.Schema.Types.ObjectId,
+            ref: 'Project'
+        },
+        quantity: {
+            type: Number,
+            required: true
+        },
+        assignedAt: {
+            type: Date,
+            default: Date.now
+        }
+    }],
     assignedAsRental: {
         type: Boolean,
         default: false

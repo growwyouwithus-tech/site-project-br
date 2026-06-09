@@ -23,6 +23,10 @@ const creditorPaymentSchema = new mongoose.Schema({
         type: String,
         trim: true
     },
+    slip: {
+        type: String, // Cloudinary URL
+        trim: true
+    },
     bankId: {
         type: mongoose.Schema.Types.ObjectId,
         ref: 'BankDetail'

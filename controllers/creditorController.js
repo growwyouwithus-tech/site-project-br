@@ -113,40 +113,46 @@ const recordCreditorPayment = async (req, res, next) => {
         }
 
         const paidAmount = parseFloat(amount);
-        const { CreditorPayment, BankDetail } = require('../models');
+        // Upload slip to Cloudinary if file exists
+        let slipUrl = null;
+        if (req.file) {
+            const { uploadToCloudinary } = require('../config/cloudinary');
+            slipUrl = await uploadToCloudinary(req.file.buffer, 'slips');
+        }
 
-        // Check for Source Creditor (Inter-Creditor Transfer)
+        // Inter-creditor transfer logic
         if (sourceCreditorId && sourceCreditorId !== '') {
             const sourceCreditor = await Creditor.findById(sourceCreditorId);
             if (!sourceCreditor) {
-                return res.status(404).json({ success: false, error: 'Source Creditor not found' });
+                return res.status(404).json({ success: false, error: 'Source creditor not found' });
             }
 
             // Create Payment Record
             const payment = new CreditorPayment({
-                creditorId, // Target
+                creditorId,
                 amount: paidAmount,
                 date: date || Date.now(),
                 paymentMode: 'creditor', // Explicitly mark as creditor transfer
                 remarks: `Transfer from ${sourceCreditor.name}: ${remarks || ''}`,
+                slip: slipUrl,
+                bankId: undefined,
                 recordedBy: userId
             });
             await payment.save();
 
-            // 1. Update Source Creditor (DEBIT transaction - Giving funds out of their wallet - Balance DECREASES)
-            // User requested wallet logic: Creditor giving money = Minus
+            // Deduct from Source Creditor
             sourceCreditor.currentBalance -= paidAmount;
             sourceCreditor.transactions.push({
                 type: 'debit',
                 amount: paidAmount,
                 date: date || new Date(),
-                description: `used for paying ${creditor.name}`,
+                description: `Payment transferred to ${creditor.name}`,
                 refId: payment._id,
                 refModel: 'CreditorPayment'
             });
             await sourceCreditor.save();
 
-            // 2. Update Target Creditor (CREDIT transaction - Receiving funds into their wallet - Balance INCREASES)
+            // Add to Destination Creditor
             // User requested wallet logic: Creditor receiving money = Plus
             creditor.currentBalance += paidAmount;
             creditor.transactions.push({
@@ -174,6 +180,7 @@ const recordCreditorPayment = async (req, res, next) => {
             date: date || Date.now(),
             paymentMode,
             remarks,
+            slip: slipUrl,
             bankId: bankId && bankId !== '' ? bankId : undefined,
             recordedBy: userId
         });

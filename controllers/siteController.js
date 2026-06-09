@@ -1751,6 +1751,7 @@ const getSiteMachines = async (req, res, next) => {
         const machines = await Machine.find({
             $or: [
                 { projectId: { $in: targetObjectIds } },
+                { 'assignments.projectId': { $in: targetObjectIds } },
                 { 
                     assignedToContractor: { $in: contractorIds },
                     projectId: null
