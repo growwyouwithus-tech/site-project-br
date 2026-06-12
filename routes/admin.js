@@ -238,7 +238,7 @@ router.post('/creditors', createCreditor);
 router.put('/creditors/:id', updateCreditor);
 router.delete('/creditors/:id', deleteCreditor);
 router.get('/creditors/:id', getCreditorDetails);
-router.post('/creditors/payment', uploadSingle, recordCreditorPayment);
+router.post('/creditors/payment', uploadReceipt, recordCreditorPayment);
 router.delete('/creditors/payments/:id', deleteCreditorPayment);
 
 module.exports = router;

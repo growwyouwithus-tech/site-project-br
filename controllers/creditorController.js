@@ -1,4 +1,4 @@
-const { Creditor } = require('../models');
+const { Creditor, CreditorPayment, BankDetail } = require('../models');
 
 // Get all creditors
 const getCreditors = async (req, res, next) => {

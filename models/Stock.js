@@ -23,7 +23,7 @@ const stockSchema = new mongoose.Schema({
     unit: {
         type: String,
         required: [true, 'Unit is required'],
-        enum: ['kg', 'ltr', 'bags', 'pcs', 'meter', 'box', 'ton', 'ft', 'piece', 'bundle'],
+        enum: ['kg', 'ltr', 'bags', 'pcs', 'meter', 'box', 'ton', 'ft', 'piece', 'bundle', 'drum'],
         default: 'kg'
     },
     quantity: {

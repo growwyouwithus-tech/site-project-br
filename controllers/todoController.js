@@ -21,7 +21,7 @@ exports.createTodo = async (req, res) => {
             dueDate,
             remark,
             projectId,
-            assignedBy: req.user._id
+            assignedBy: req.user.userId
         });
 
         res.status(201).json({ success: true, data: todo });
@@ -63,7 +63,7 @@ exports.updateTodoStatus = async (req, res) => {
         if (workPercent !== undefined) todo.workPercent = Math.min(100, Math.max(0, parseInt(workPercent) || 0));
         if (remark !== undefined) todo.remark = remark;
         
-        todo.lastUpdatedBy = req.user._id;
+        todo.lastUpdatedBy = req.user.userId;
         await todo.save();
 
         res.status(200).json({ success: true, data: todo });

@@ -648,7 +648,7 @@ const recordVendorPayment = async (req, res, next) => {
             bankId: bankId && bankId !== '' ? bankId : undefined,
             creditorId: creditorId && creditorId !== '' ? creditorId : undefined,
             remarks,
-            recordedBy: req.user._id,
+            recordedBy: req.user.userId,
             isAdvance: req.body.isAdvance === 'true' || req.body.isAdvance === true,
             receiptUrl
         });
@@ -1904,7 +1904,7 @@ const reRentMachine = async (req, res, next) => {
         machine.rentPausedHistory = [];
         machine.availableLocation = req.body.availableLocation || 'Main Yard';
 
-        machine.save();
+        await machine.save();
 
         res.json({
             success: true,
