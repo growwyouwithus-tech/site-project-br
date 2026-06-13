@@ -87,7 +87,8 @@ const {
   getProfile,
   getMachineFuelUsage,
   assignMachineQuantity,
-  unassignMachineQuantity
+  unassignMachineQuantity,
+  updateMachineMaintenanceQuantity
 } = require('../controllers/adminController');
 
 const {
@@ -143,6 +144,7 @@ router.post('/machines/:id/return', returnRentedMachine);
 router.post('/machines/:id/re-rent', reRentMachine);
 router.post('/machines/:id/assign-qty', assignMachineQuantity);
 router.post('/machines/:id/unassign-qty', unassignMachineQuantity);
+router.post('/machines/:id/maintenance-qty', updateMachineMaintenanceQuantity);
 router.get('/machines/:id/fuel-usage', getMachineFuelUsage);
 
 // Stock

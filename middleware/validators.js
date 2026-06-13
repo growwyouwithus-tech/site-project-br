@@ -70,7 +70,7 @@ const vendorValidation = [
 
 // Expense validation
 const expenseValidation = [
-  body('projectId').notEmpty().withMessage('Project ID is required'),
+  body('projectId').optional({ checkFalsy: true }),
   body('name').trim().notEmpty().withMessage('Expense name is required'),
   body('amount').isNumeric().withMessage('Amount must be a number'),
   validate

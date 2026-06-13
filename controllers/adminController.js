@@ -815,7 +815,7 @@ const createExpense = async (req, res, next) => {
         }
 
         const newExpense = new Expense({
-            projectId,
+            projectId: projectId || undefined,
             name,
             amount: parseFloat(amount),
             voucherNumber,
@@ -831,10 +831,12 @@ const createExpense = async (req, res, next) => {
         await newExpense.save();
 
         // Update project expenses
-        await Project.findByIdAndUpdate(
-            projectId,
-            { $inc: { expenses: parseFloat(amount) } }
-        );
+        if (projectId) {
+            await Project.findByIdAndUpdate(
+                projectId,
+                { $inc: { expenses: parseFloat(amount) } }
+            );
+        }
 
         // If bankId is provided, record transaction in bank
         if (bankId && bankId !== '') {
@@ -1396,7 +1398,7 @@ const updateMachine = async (req, res, next) => {
     try {
         const { id } = req.params;
         const updates = req.body;
-        const { maintenanceCost, maintenanceDescription } = req.body;
+        const { maintenanceCost, maintenanceDescription, maintenancePaymentMode, maintenanceBankId, maintenanceCreditorId } = req.body;
 
         const machine = await Machine.findById(id);
         if (!machine) {
@@ -1437,6 +1439,50 @@ const updateMachine = async (req, res, next) => {
                     updates.maintenanceHistory = history;
                 }
 
+                let expensePaymentMode = 'cash';
+                let expenseBankId = null;
+                let expenseCreditorId = null;
+
+                if (maintenancePaymentMode === 'bank' && maintenanceBankId) {
+                    const bank = await BankDetail.findById(maintenanceBankId);
+                    if (!bank) return res.status(404).json({ success: false, error: 'Bank account not found' });
+                    if (bank.currentBalance < Number(maintenanceCost)) {
+                        return res.status(400).json({ success: false, error: 'Insufficient funds in selected bank account' });
+                    }
+                    
+                    expensePaymentMode = 'bank';
+                    expenseBankId = maintenanceBankId;
+
+                    bank.currentBalance -= Number(maintenanceCost);
+                    if (!bank.transactions) bank.transactions = [];
+                    bank.transactions.push({
+                        date: new Date(),
+                        amount: Number(maintenanceCost),
+                        type: 'debit',
+                        description: `Maintenance Cost for Machine: ${machine.name}`,
+                        balanceAfter: bank.currentBalance
+                    });
+                    await bank.save();
+                } else if (maintenancePaymentMode === 'creditor' && maintenanceCreditorId) {
+                    const creditorObj = await Creditor.findById(maintenanceCreditorId);
+                    if (!creditorObj) return res.status(404).json({ success: false, error: 'Creditor not found' });
+                    
+                    expensePaymentMode = 'credit';
+                    expenseCreditorId = maintenanceCreditorId;
+
+                    creditorObj.currentBalance -= Number(maintenanceCost);
+                    if (!creditorObj.transactions) creditorObj.transactions = [];
+                    creditorObj.transactions.push({
+                        date: new Date(),
+                        amount: Number(maintenanceCost),
+                        type: 'debit',
+                        description: `Maintenance Work for Machine: ${machine.name}`,
+                        paymentMode: 'debit',
+                        addedBy: req.user.userId
+                    });
+                    await creditorObj.save();
+                }
+
                 // Create Expense
                 const newExpense = new Expense({
                     projectId: machine.projectId, // Use existing project if available
@@ -1445,7 +1491,9 @@ const updateMachine = async (req, res, next) => {
                     amount: Number(maintenanceCost),
                     date: new Date(),
                     remarks: maintenanceDescription || `Maintenance for ${machine.name}`,
-                    paymentMode: 'cash',
+                    paymentMode: expensePaymentMode,
+                    bankId: expenseBankId,
+                    creditorId: expenseCreditorId,
                     addedBy: req.user.userId
                 });
                 await newExpense.save();
@@ -1579,7 +1627,7 @@ const updateMachine = async (req, res, next) => {
 
         // Normal updates
         Object.keys(updates).forEach(key => {
-            if (key !== 'maintenanceCost' && key !== 'maintenanceDescription') {
+            if (key !== 'maintenanceCost' && key !== 'maintenanceDescription' && key !== 'maintenancePaymentMode' && key !== 'maintenanceBankId' && key !== 'maintenanceCreditorId') {
                 machine[key] = updates[key];
             }
         });
@@ -2003,6 +2051,130 @@ const unassignMachineQuantity = async (req, res, next) => {
         await machine.save();
 
         res.json({ success: true, message: 'Quantity unassigned successfully', data: machine });
+    } catch (error) {
+        next(error);
+    }
+};
+
+const updateMachineMaintenanceQuantity = async (req, res, next) => {
+    try {
+        const { id } = req.params;
+        const { action, quantity, maintenanceCost, maintenanceDescription, maintenancePaymentMode, maintenanceBankId, maintenanceCreditorId } = req.body;
+        const qty = Number(quantity);
+
+        if (!action || qty <= 0) {
+            return res.status(400).json({ success: false, error: 'Valid Action and Quantity > 0 are required' });
+        }
+
+        const machine = await Machine.findById(id);
+        if (!machine) return res.status(404).json({ success: false, error: 'Machine not found' });
+
+        const totalQty = Number(machine.quantity) || 1;
+        const assignedQty = machine.assignments?.reduce((sum, a) => sum + a.quantity, 0) || 0;
+        const maintenanceQty = machine.maintenanceQuantity || 0;
+        const availableQty = totalQty - assignedQty - maintenanceQty;
+
+        if (action === 'send') {
+            if (qty > availableQty) {
+                return res.status(400).json({ success: false, error: `Cannot send ${qty} to maintenance. Only ${availableQty} available.` });
+            }
+            machine.maintenanceQuantity = maintenanceQty + qty;
+
+            machine.maintenanceHistory = machine.maintenanceHistory || [];
+            machine.maintenanceHistory.push({
+                enteredAt: new Date(),
+                quantity: qty,
+                description: maintenanceDescription || `Sent ${qty} items to maintenance`
+            });
+
+        } else if (action === 'return') {
+            if (qty > maintenanceQty) {
+                return res.status(400).json({ success: false, error: `Cannot return ${qty}. Only ${maintenanceQty} in maintenance.` });
+            }
+            machine.maintenanceQuantity = maintenanceQty - qty;
+
+            const history = machine.maintenanceHistory || [];
+            const activeRecords = history.filter(h => !h.completedAt);
+            if (activeRecords.length > 0) {
+                const lastRecord = activeRecords[activeRecords.length - 1];
+                lastRecord.completedAt = new Date();
+                lastRecord.cost = Number(maintenanceCost) || 0;
+                lastRecord.quantity = qty;
+                lastRecord.description = maintenanceDescription || `Returned ${qty} items from maintenance. ${lastRecord.description || ''}`;
+                machine.maintenanceHistory = history;
+            } else {
+                machine.maintenanceHistory.push({
+                    enteredAt: new Date(),
+                    completedAt: new Date(),
+                    cost: Number(maintenanceCost) || 0,
+                    quantity: qty,
+                    description: maintenanceDescription || `Returned ${qty} items from maintenance`
+                });
+            }
+
+            if (Number(maintenanceCost) > 0) {
+                let expensePaymentMode = 'cash';
+                let expenseBankId = null;
+                let expenseCreditorId = null;
+
+                if (maintenancePaymentMode === 'bank' && maintenanceBankId) {
+                    const bank = await BankDetail.findById(maintenanceBankId);
+                    if (!bank) return res.status(404).json({ success: false, error: 'Bank account not found' });
+                    if (bank.currentBalance < Number(maintenanceCost)) return res.status(400).json({ success: false, error: 'Insufficient funds' });
+                    
+                    expensePaymentMode = 'bank';
+                    expenseBankId = maintenanceBankId;
+
+                    bank.currentBalance -= Number(maintenanceCost);
+                    if (!bank.transactions) bank.transactions = [];
+                    bank.transactions.push({
+                        date: new Date(),
+                        amount: Number(maintenanceCost),
+                        type: 'debit',
+                        description: `Maintenance Cost for ${qty}x ${machine.name}`,
+                        balanceAfter: bank.currentBalance
+                    });
+                    await bank.save();
+                } else if (maintenancePaymentMode === 'creditor' && maintenanceCreditorId) {
+                    const creditorObj = await Creditor.findById(maintenanceCreditorId);
+                    if (!creditorObj) return res.status(404).json({ success: false, error: 'Creditor not found' });
+                    
+                    expensePaymentMode = 'credit';
+                    expenseCreditorId = maintenanceCreditorId;
+
+                    creditorObj.currentBalance -= Number(maintenanceCost);
+                    if (!creditorObj.transactions) creditorObj.transactions = [];
+                    creditorObj.transactions.push({
+                        date: new Date(),
+                        amount: Number(maintenanceCost),
+                        type: 'debit',
+                        description: `Maintenance Work for ${qty}x ${machine.name}`,
+                        paymentMode: 'debit',
+                        addedBy: req.user.userId
+                    });
+                    await creditorObj.save();
+                }
+
+                const newExpense = new Expense({
+                    projectId: machine.projectId,
+                    name: `Maintenance: ${qty}x ${machine.name}`,
+                    category: 'maintenance',
+                    amount: Number(maintenanceCost),
+                    date: new Date(),
+                    remarks: maintenanceDescription || `Maintenance for ${machine.name}`,
+                    paymentMode: expensePaymentMode,
+                    bankId: expenseBankId,
+                    creditorId: expenseCreditorId,
+                    addedBy: req.user.userId
+                });
+                await newExpense.save();
+            }
+        } else {
+            return res.status(400).json({ success: false, error: 'Invalid action' });
+        }
+
+        await machine.save();
+        res.json({ success: true, message: `Maintenance quantity ${action}ed successfully`, data: machine });
     } catch (error) {
         next(error);
     }
@@ -2580,7 +2752,7 @@ const getAccounts = async (req, res, next) => {
 
         const totalCashTransactions = allTransactions
             .filter(t => t.paymentMode === 'cash')
-            .reduce((sum, t) => sum + (t.amount || 0), 0);
+            .reduce((sum, t) => sum + (t.type === 'credit' ? (t.amount || 0) : -(t.amount || 0)), 0);
 
         res.json({
             success: true,
@@ -4303,6 +4475,7 @@ module.exports = {
     reRentMachine,
     assignMachineQuantity,
     unassignMachineQuantity,
+    updateMachineMaintenanceQuantity,
     getMachineFuelUsage,
     getStocks,
     createStock,

@@ -104,8 +104,11 @@ const getCreditorDetails = async (req, res, next) => {
 // Record creditor payment
 const recordCreditorPayment = async (req, res, next) => {
     try {
-        const { creditorId, amount, date, paymentMode, remarks, bankId, sourceCreditorId } = req.body;
+        let { creditorId, amount, date, paymentMode, remarks, bankId, sourceCreditorId } = req.body;
         const userId = req.user.userId;
+
+        if (Array.isArray(creditorId)) creditorId = creditorId[0];
+        if (Array.isArray(sourceCreditorId)) sourceCreditorId = sourceCreditorId[0];
 
         const creditor = await Creditor.findById(creditorId);
         if (!creditor) {

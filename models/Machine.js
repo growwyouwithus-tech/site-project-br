@@ -28,6 +28,10 @@ const machineSchema = new mongoose.Schema({
         enum: ['available', 'in-use', 'maintenance', 'returned'],
         default: 'available'
     },
+    maintenanceQuantity: {
+        type: Number,
+        default: 0
+    },
     availableLocation: {
         type: String,
         trim: true,
@@ -123,6 +127,7 @@ const machineSchema = new mongoose.Schema({
         enteredAt: Date,
         completedAt: Date,
         cost: Number,
+        quantity: Number,
         description: String,
         remark: String
     }],

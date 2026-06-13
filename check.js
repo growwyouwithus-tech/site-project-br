@@ -1,20 +1,15 @@
 const mongoose = require('mongoose');
+const Machine = require('./models/Machine');
+require('dotenv').config({ path: './.env' });
 
-async function run() {
-    try {
-        await mongoose.connect('mongodb://127.0.0.1:27017/site-management');
-        const db = mongoose.connection.db;
-
-        const contractors = await db.collection('contractors').find({ name: /parvesh/i }).toArray();
-        console.log('Contractor Parvesh:', contractors);
-
-        const users = await db.collection('users').find({ role: 'sitemanager' }).toArray();
-        console.log('Site Managers:', users.map(u => ({ email: u.email, assignedSites: u.assignedSites })));
-
-        process.exit(0);
-    } catch (error) {
-        console.error(error);
-        process.exit(1);
+async function checkMaintenance() {
+    await mongoose.connect(process.env.MONGODB_URI);
+    const machines = await Machine.find({ name: /troli/i });
+    console.log('Found trolis:', machines.length);
+    for (let m of machines) {
+        console.log(`Machine ${m.name}: Qty ${m.quantity}, Maintenance Qty ${m.maintenanceQuantity}`);
     }
+    process.exit(0);
 }
-run();
+
+checkMaintenance();
